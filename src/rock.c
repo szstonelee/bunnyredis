@@ -27,6 +27,7 @@ void _resumeRockClient(client *c) {
  * Task will be done in async mode */
 void checkCallValueInRock(client *c) {
 	serverAssert(c);
+	serverAssert(c->streamWriting != STREAM_WRITE_WAITING);
 	serverAssert(c->rockKeyNumber == 0);
 
 	// for test

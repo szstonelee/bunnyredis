@@ -36,6 +36,7 @@
 #include <ctype.h>
 
 #include "rock.h"
+#include "virtual.h"
 
 static void setProtocolError(const char *errstr, client *c);
 int postponeClientRead(client *c);
@@ -195,6 +196,7 @@ client *createClient(connection *conn) {
     initClientMultiState(c);
 
     c->rockKeyNumber = 0;   // rockKeyNumber initialzed
+    c->streamWriting = STREAM_WRITE_INIT;   // status is no stream writing
 
     return c;
 }
@@ -2030,6 +2032,7 @@ int processCommandAndResetClient(client *c) {
     /* performEvictions may flush slave output buffers. This may
      * result in a slave, that may be the active client, to be
      * freed. */
+    c->streamWriting = STREAM_WRITE_INIT;    // after the command exectued in the current c, we need reset streamWriting
     return deadclient ? C_ERR : C_OK;
 }
 
@@ -2054,6 +2057,9 @@ int processPendingCommandsAndResetClient(client *c) {
 void processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
     while(c->qb_pos < sdslen(c->querybuf)) {
+        /* first check streamWring state before rockKeyNumber */
+        if (c->streamWriting == STREAM_WRITE_WAITING) break;
+
         /* If the client is waiting for keys' value in RocksDB */
         if (c->rockKeyNumber > 0) break;
 
@@ -2118,9 +2124,22 @@ void processInputBuffer(client *c) {
                 break;
             }
 
-            /* We are finally ready to execute the command. */
-            checkCallValueInRock(c);        // before execute the command, we need check value in RocksDB
-            if (c->rockKeyNumber > 0) break;
+            int jumpToExec = 0;
+            // check streamWrite First
+            if(c->streamWriting == STREAM_WRITE_INIT) {
+                if (checkAndSetStreamWriting(c) == C_ERR)
+                    // we can skip checkCallValueInRock because processCommandAndResetClient()
+                    // will fail which is guaranteed by checkAndSetStreamWriting()
+                    jumpToExec = 1;
+                else if (c->streamWriting == STREAM_WRITE_WAITING)
+                    break;
+            }
+            
+            if (!jumpToExec) {
+                /* We are finally ready to execute the command. */
+                checkCallValueInRock(c);        // before execute the command, we need check value in RocksDB
+                if (c->rockKeyNumber > 0) break;
+            }
 
             if (processCommandAndResetClient(c) == C_ERR) {
                 /* If the client is no longer valid, we avoid exiting this

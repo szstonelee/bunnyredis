@@ -84,6 +84,16 @@ typedef long long ustime_t; /* microsecond time type. */
 #include "endianconv.h"
 #include "crc64.h"
 
+/* stream writte state */
+#define STREAM_WRITE_INIT       0
+#define STREAM_WRITE_WAITING    1
+#define STREAM_WRITE_FINISH     2
+
+/* stream command catagary */
+#define STREAM_FORBIDDEN_CMD    -1
+#define STREAM_NO_NEED_CMD      0      
+#define STREAM_ENABLED_CMD      1
+
 /* Error codes */
 #define C_OK                    0
 #define C_ERR                   -1
@@ -950,6 +960,8 @@ typedef struct client {
 
     /* key(for hash, it is key+field) number needed to be cleared with value in Rocksdb */
     unsigned long rockKeyNumber;
+    /* client issue a write command which needs to be streamed to be ordered */
+    int streamWriting;      // three state, STREAM_WRITE_INIT, STREAM_WRITE_WAITING, STREAM_WRITE_FINISH
 } client;
 
 struct saveparam {
@@ -1651,6 +1663,7 @@ typedef void redisCommandProc(client *c);
 typedef int redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, getKeysResult *result);
 struct redisCommand {
     char *name;
+    int streamCmdCategory;  /* NOTE: pos must be 2, STREAM_FORBIDDEN_CMD(-1), STREAM_NO_NEED_CMD(0), STREAM_ENABLED_CMD(1) */
     redisCommandProc *proc;
     int arity;
     char *sflags;   /* Flags as string representation, one char per flag. */
@@ -1668,6 +1681,8 @@ struct redisCommand {
                    ACLs. A connection is able to execute a given command if
                    the user associated to the connection has this command
                    bit set in the bitmap of allowed commands. */
+
+    
 };
 
 struct redisError {
