@@ -65,7 +65,6 @@
 
 #include "rock.h"
 #include "streamwrite.h"
-#include "virtual.h"
 
 /* Our shared "common" objects */
 
@@ -3353,8 +3352,10 @@ void initServer(void) {
     /* Initialize ACL default password if it exists */
     ACLUpdateDefaultUserPassword(server.requirepass);
 
-    /* stream write init */
+    /* stream write consumer init */
     initStreamPipeAndStartConsumer();
+    /* stream write producer init */
+    initKafkaProducer();
 
     /* init virtual client */
     server.virtual_client = createClient(NULL);

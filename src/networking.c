@@ -36,7 +36,7 @@
 #include <ctype.h>
 
 #include "rock.h"
-#include "virtual.h"
+#include "streamwrite.h"
 
 static void setProtocolError(const char *errstr, client *c);
 int postponeClientRead(client *c);

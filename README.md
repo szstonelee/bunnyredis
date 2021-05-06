@@ -1,3 +1,6 @@
+
+用官网推荐的Kafka C Library, https://docs.confluent.io/platform/current/clients/index.html#, https://github.com/edenhill/librdkafka
+
 This README is just a fast *quick start* document. You can find more detailed documentation at [redis.io](https://redis.io).
 
 What is Redis?
