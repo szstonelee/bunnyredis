@@ -1644,6 +1644,8 @@ struct redisServer {
     int stream_pipe_write;  /* Stream write consumer signal */
 
     client *virtual_client;   /* The "fake client" to query Redis from stream writer */
+
+    unsigned int node_id;    // distinct node id is the cluster
 };
 
 #define MAX_KEYS_BUFFER 256

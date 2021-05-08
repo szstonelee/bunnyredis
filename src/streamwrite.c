@@ -1,5 +1,9 @@
 #include "server.h"
+
 #include <librdkafka/rdkafka.h>
+#include <uuid/uuid.h>
+
+#include "endianconv.h"
 
 // spin lock only run in Linux
 static pthread_spinlock_t consumerLock;     
@@ -8,10 +12,17 @@ static pthread_spinlock_t producerLock;
 #define START_SLEEP_MICRO   16
 #define MAX_SLEEP_MICRO     1024            // max sleep for 1 ms
 
-list* sndMsgs;
+#define START_OFFSET        0       // consumer start offset to read
 
-long long startTime;
-long long endTime;
+static int kafkaReadyAndTopicCorrect = 0;   // producer start for check kafka state and main thread check it for correctness
+static const char *bootstrapBrokers = "127.0.0.1:9092,";
+static const char *bunnyRedisTopic = "redisStreamWrite"; 
+
+list* sndMsgs;  // producer and main thread contented data
+list* rcvMsgs;  // consumer and main thread contented data
+
+// long long startTime;
+// long long endTime;
 
 static void lockConsumerData() {
     int res = pthread_spin_lock(&consumerLock);
@@ -33,79 +44,95 @@ static void unlockProducerData() {
     serverAssert(res == 0);
 }
 
-static void signalByPipeInConsumerThread() {
-    /* signal main thread rockPipeReadHandler()*/
-    char tempBuf[1] = "a";
-    size_t n = write(server.stream_pipe_write, tempBuf, 1);
-    serverAssert(n == 1);
+/* main thread call this to add command to sndMsgs */
+/* We think every parameter (including command name) stored in client argv is String Object */
+static void addCommandToStreamWrite(client *c) {
+    // serialize the command
+
+    // node id
+    uint8_t node_id = (uint8_t)server.node_id;
+    sds buf = sdsnewlen(&node_id, sizeof(node_id));
+    // client id
+    uint64_t client_id = intrev64ifbe(c->id);
+    buf = sdscatlen(buf, &client_id, sizeof(client_id));
+    // db id
+    uint8_t dbid = (uint8_t)c->db->id;
+    buf = sdscatlen(buf, &dbid, sizeof(dbid));
+    // command name
+    serverAssert(c->argv[0]->encoding == OBJ_ENCODING_RAW || c->argv[0]->encoding == OBJ_ENCODING_EMBSTR);
+    serverAssert(sdslen(c->argv[0]->ptr) <= UINT8_MAX);
+    uint8_t cmd_len = sdslen(c->argv[0]->ptr);
+    buf = sdscatlen(buf, &cmd_len, sizeof(cmd_len));
+    buf = sdscatlen(buf, c->argv[0]->ptr, sdslen(c->argv[0]->ptr));
+    // other arguments
+    for (int i = 1; i < c->argc; ++i) {
+        serverAssert(c->argv[i]->encoding == OBJ_ENCODING_RAW || c->argv[i]->encoding == OBJ_ENCODING_EMBSTR);
+        serverAssert(sdslen(c->argv[i]->ptr) <= UINT32_MAX);
+        uint32_t arg_len = intrev32ifbe(sdslen(c->argv[i]->ptr));
+        buf = sdscatlen(buf, &arg_len, sizeof(arg_len));
+        buf = sdscatlen(buf, c->argv[i]->ptr, sdslen(c->argv[i]->ptr));
+    } 
+
+    lockProducerData();
+    listAddNodeTail(sndMsgs, buf);
+    unlockProducerData();
 }
 
-static void recvSignalByPipe() {
-    char tmpUseBuf[1];
-    size_t n = read(server.stream_pipe_read, tmpUseBuf, 1);     
-    serverAssert(n == 1);
-}
+/* C_OK, succesfully, C_ERR, failed */
+int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid, 
+              sds *command, list **args) {
+    size_t msg_len = sdslen(msg);
+    size_t cnt = 0;
+    char *p = msg;
 
-/* the event handler is executed from main thread, which is signaled by the pipe
- * from the rockdb thread. When it is called by the eventloop, there is 
- * a return result in rockJob */
-static void _streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask) {
-    UNUSED(mask);
-    UNUSED(clientData);
-    UNUSED(eventLoop);
-    UNUSED(fd);
+    // node id
+    *node_id = *((uint8_t*)p);
+    cnt += sizeof(*node_id);
+    if (cnt > msg_len) return C_ERR;
+    p += sizeof(*node_id);
 
-    recvSignalByPipe();
+    // client id
+    *client_id = intrev64ifbe(*((uint64_t*)p));
+    cnt += sizeof(*client_id);
+    if (cnt > msg_len) return C_ERR;
+    p += sizeof(*client_id);
 
-    lockConsumerData();
-    endTime = ustime();
-    unlockConsumerData();
-    // serverLog(LL_WARNING, "latency = %lld", endTime - startTime);
-}
+    // db id
+    *dbid = *((uint8_t*)p);
+    cnt += sizeof(*dbid);
+    if (cnt > msg_len) return C_ERR;
+    p += sizeof(*dbid);
 
-/* this is the consumer thread entrance */
-static void* _entryInConsumerThread(void *arg) {
-    UNUSED(arg);
-    uint sleepMicro = 1024;      // test for 1 ms
+    // command name
+    uint8_t cmd_len = *((uint8_t*)p);
+    cnt += sizeof(cmd_len);
+    if (cnt > msg_len) return C_ERR;
+    p += sizeof(cmd_len);
+    cnt += cmd_len;
+    if (cnt > msg_len) return C_ERR;
+    *command = sdsnewlen(p, cmd_len);
+    p += cmd_len;
 
-    while(1) {
-        usleep(sleepMicro);
-        lockConsumerData();
-        startTime = ustime();
-        unlockConsumerData();
-        
-        signalByPipeInConsumerThread();
+    //  other arguments
+    *args = listCreate();
+    while (cnt < msg_len) {
+        uint32_t arg_len = intrev32ifbe(*((uint32_t*)p));
+        cnt += sizeof(arg_len);
+        if (cnt > msg_len) return C_ERR;
+        p += sizeof(arg_len);
+
+        cnt += arg_len;
+        if (cnt > msg_len) return C_ERR;
+        sds arg = sdsnewlen(p, arg_len);
+        p += arg_len;
+
+        listAddNodeTail(*args, arg);
     }
 
-    return NULL;
-}
 
-/* the function create a stream reader thread, which will read data from kafka 
- * when stream reader thread read some write operations from kafka,
- * it will write it to buffer (sync by spin lock) then notify main thread by pipe 
- * because main thread maybe sleep in eventloop for events comming */
-void initStreamPipeAndStartConsumer() {
-    pthread_t consumer_thread;
-    int pipefds[2];
+    if (cnt != msg_len) return C_ERR;
 
-    int spin_init_res = pthread_spin_init(&consumerLock, 0);
-    if (spin_init_res != 0)
-        serverPanic("Can not init consumer spin lock, error code = %d", spin_init_res);
-
-    if (pipe(pipefds) == -1) 
-        serverPanic("Can not create pipe for stream.");
-
-    server.stream_pipe_read = pipefds[0];
-    server.stream_pipe_write = pipefds[1];
-
-    if (aeCreateFileEvent(server.el, server.stream_pipe_read, 
-        AE_READABLE, _streamConsumerSignalHandler,NULL) == AE_ERR) {
-        serverPanic("Unrecoverable error creating server.rock_pipe file event.");
-    }
-
-    if (pthread_create(&consumer_thread, NULL, _entryInConsumerThread, NULL) != 0) {
-        serverPanic("Unable to create a consumer thread.");
-    }
+    return C_OK;
 }
 
 // please reference scripting.c
@@ -181,6 +208,11 @@ int checkAndSetStreamWriting(client *c) {
     // recover client to saved info
     c->cmd = savedCmd;
     c->lastcmd = savedLastcmd;
+
+    // add command info as message to sndMsgs which will trigger stream write
+    if (c->streamWriting == STREAM_WRITE_WAITING)
+        addCommandToStreamWrite(c);
+
     return C_OK;
 }
 
@@ -242,81 +274,121 @@ void execVritualCommand() {
     c->argv = NULL;
 }
 
+
 /*                                 */
 /*                                 */
 /* The following is about producer */
 /*                                 */
 /*                                 */
 
-/* this is be called in produer thread */
-static void dr_msg_cb(rd_kafka_t *rk,
-                      const rd_kafka_message_t *rkmessage, void *opaque) {
+/* this is be called in produer thread. NOTE: we clear payload here */
+/* reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
+static void dr_msg_cb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque) {
     UNUSED(rk);
+    UNUSED(opaque);
 
-    serverAssert(opaque);
+    // NOTE: https://github.com/edenhill/librdkafka/issues/1288
+    sds msg = rkmessage->_private;
+    serverAssert(msg);
     
-    if (rkmessage->err != RD_KAFKA_RESP_ERR_NO_ERROR) 
+    if (rkmessage->err) {
         // permanent error
-        serverPanic("%% Message delivery failed: %s\n", rd_kafka_err2str(rkmessage->err));
-    
-    if (!rkmessage->err)
-        sdsfree((sds)opaque);   // when success delivered, we free the msg
+        serverLog(LL_WARNING, "%% Message delivery permantlly failed: %s\n", rd_kafka_err2str(rkmessage->err));
+        exit(1);
+    } else {
+        sdsfree(msg);   // when success delivered, we free the msg
+    }
 }
 
+/* reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 static void error_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque) {
     UNUSED(rk);
     UNUSED(opaque);
 
-    if (err != RD_KAFKA_RESP_ERR__FATAL)
-        serverPanic("%% Error: %s: %s\n", rd_kafka_err2name(err), reason);
+    rd_kafka_resp_err_t orig_err;
+    char errstr[512];
+
+    if (err != RD_KAFKA_RESP_ERR__FATAL) {
+        // internal handle for gracefully retry by librdkafka library
+        serverLog(LL_WARNING, "kafka producer no-fatel error, usually you do not care, error = %s, reason = %s",
+            rd_kafka_err2name(err), reason);        
+    } else {
+        // fatel error
+        orig_err = rd_kafka_fatal_error(rk, errstr, sizeof(errstr));
+        serverLog(LL_WARNING, "kafka producer fatel error, fatel error = %s, error = %s",
+            rd_kafka_err2name(orig_err), errstr);
+        exit(1);
+    }
 }
 
-static sds pickSndMsg() {
+static sds pickSndMsgInProducerThread() {
     listIter li;
     listNode *ln;
     sds msg;
 
-    if (listLength(sndMsgs) == 0) return NULL;
-
     lockProducerData();
+
     listRewind(sndMsgs, &li);
-    ln = listNext(&li);
-    serverAssert(ln);
-    msg = listNodeValue(ln);
-    listDelNode(sndMsgs, ln);
+    ln = listNext(&li);    
+    if (ln) {
+        msg = listNodeValue(ln);
+        listDelNode(sndMsgs, ln);
+    } else {
+        msg = NULL;
+    }
+
     unlockProducerData();
 
     return msg;
 }
 
+// reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c
 static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
-    rd_kafka_resp_err_t err;
-
     serverAssert(msg);
 
-    int retryTotalMs = 0;
-    int retryMs = 16;
-    while (retryTotalMs < 10000) {   // retry max time is 10 seconds
-        // we must specify the partion zero for order msg
-        // seet msgflags to 0, we does not need copy or free the payload
-        // the payload will be freed in call back function
-        err = rd_kafka_produce(rkt, 0, 0, msg, sdslen(msg), NULL, 0, msg);
+    int errno;
+    while (1) {
+        // NOTE: msg_opaque parameter needs to be msg to reclame the memory in db_msg_cb()
+        errno = rd_kafka_produce(rkt, 0, 0, msg, sdslen(msg), NULL, 0, msg);    
 
-        if (!err) return;
-
-        if (err != RD_KAFKA_RESP_ERR__QUEUE_FULL) break;  // fatel error
-        
-        rd_kafka_poll(rk, retryMs);    // block for retry
-        retryTotalMs += retryMs;
-        retryMs <<= 1;  // double retry time
+        switch (errno) {
+        case 0:
+            rd_kafka_poll(rk, 0/*non-blocking*/);
+            return; // successfully
+        case ENOBUFS:   
+            // kafak producer queue is full
+            rd_kafka_poll(rk, 1000/*block for max 1000ms*/);
+            break;      // retry
+        default:
+            // stop error
+            serverLog(LL_WARNING, "sendKafkaMsgInProducerThread() fatel error, errono = %d, reason = %s",
+                errno, rd_kafka_err2name(rd_kafka_last_error()));
+            exit(1);
+        }
     }
-    
-    serverPanic("sendKafkaMsgInProducerThread() failed for tring %d times", retryTotalMs);
+
+    serverLog(LL_WARNING, "sendKafkaMsgInProducerThread() can not reach here!");
+    exit(1);
+}
+
+/* We use rd_kafka_metadata() to check the topic valid in Kafka */
+/* Most rdkafka API are local only, we need a API for test Kafka liveness */
+void checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
+    const struct rd_kafka_metadata *data;
+    rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 1, rkt, &data, 50000);  // 5 seconds
+    if (err == RD_KAFKA_RESP_ERR_NO_ERROR) {
+        rd_kafka_metadata_destroy(data);
+        lockProducerData();
+        kafkaReadyAndTopicCorrect = 1;
+        unlockProducerData();
+    } else {
+        serverLog(LL_WARNING, "checkKafkaInProduerThread() failed for reason = %s", rd_kafka_err2str(err));
+    }
 }
 
 /* this is the producer thread entrance. Here we init kafka prodcer environment 
 *  and then start a forever loop for send messages and dealt with error */
-static void* _entryInProducerThread(void *arg) {
+static void* entryInProducerThread(void *arg) {
     UNUSED(arg);
 
     sndMsgs = listCreate();
@@ -324,47 +396,48 @@ static void* _entryInProducerThread(void *arg) {
 
     rd_kafka_t *rk;
     rd_kafka_topic_t *rkt; 
-    char *brokers = "127.0.0.1:9092,";
-    char *topic = "redisStreamWrite";
     rd_kafka_conf_t *conf;
     rd_kafka_topic_conf_t *topicConf;
     char errstr[512];  
 
     conf = rd_kafka_conf_new();
-    if (rd_kafka_conf_set(conf, "bootstrap.servers", brokers,
+    if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrapBrokers,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-        serverPanic("initKafkaProducer() failed for rd_kafka_conf_set() bootstrap.servers, reason = %s", errstr);
+        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() bootstrap.servers, reason = %s", errstr);
     // set time out to be infinite
     if (rd_kafka_conf_set(conf, "message.timeout.ms", "0",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-        serverPanic("initKafkaProducer() failed for rd_kafka_conf_set() message.timeout.ms, reason = %s", errstr);
+        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.timeout.ms, reason = %s", errstr);
     if (rd_kafka_conf_set(conf, "enable.idempotence", "true",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-        serverPanic("initKafkaProducer() failed for rd_kafka_conf_set() enable.idempotence, reason = %s", errstr);
+        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() enable.idempotence, reason = %s", errstr);
     // set broker message size (to 100 M)
     if (rd_kafka_conf_set(conf, "message.max.bytes", "100000000",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-        serverPanic("initKafkaProducer() failed for rd_kafka_conf_set() message.max.bytes, reason = %s", errstr);
+        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.max.bytes, reason = %s", errstr);
     rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
     rd_kafka_conf_set_error_cb(conf, error_cb);
     rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
     if (!rk)
-        serverPanic("initKafkaProducer() failed for rd_kafka_new(), reason = %s", errstr);
+        serverPanic("initKafkaProducer failed for rd_kafka_new(), reason = %s", errstr);
     topicConf = rd_kafka_topic_conf_new();
     if (!topicConf)
-        serverPanic("initKafkaProducer() failed for rd_kafka_topic_conf_new()");
-    rkt = rd_kafka_topic_new(rk, topic, topicConf);
+        serverPanic("initKafkaProducer failed for rd_kafka_topic_conf_new()");
+    rkt = rd_kafka_topic_new(rk, bunnyRedisTopic, topicConf);
     if (!rkt)
-        serverPanic("initKafkaProducer() failed for rd_kafka_topic_new(), errno = %d,", errno);
+        serverPanic("initKafkaProducer failed for rd_kafka_topic_new(), errno = %d,", errno);
+
+    checkKafkaInProduerThread(rk, rkt); // for waiting mainthread
 
     while(1) {
-        sds msg;
-        if ((msg = pickSndMsg())) {
+        sds msg = pickSndMsgInProducerThread();
+        if (msg) {
             sendKafkaMsgInProducerThread(msg, rk, rkt);
             sleepMicro = START_SLEEP_MICRO;
             continue;
         }
 
+        rd_kafka_poll(rk, 0/*non-blocking*/);
         usleep(sleepMicro);
         sleepMicro <<= 1;        // double sleep time
         if (sleepMicro > MAX_SLEEP_MICRO) 
@@ -384,7 +457,220 @@ void initKafkaProducer() {
     if (spin_init_res != 0)
         serverPanic("Can not init producer spin lock, error code = %d", spin_init_res);
 
-    if (pthread_create(&producer_thread, NULL, _entryInProducerThread, NULL) != 0) 
+    if (pthread_create(&producer_thread, NULL, entryInProducerThread, NULL) != 0) 
         serverPanic("Unable to create a producer thread.");
+
+    // we use up to 10 seconds which must more than checkKafkaInProduerThread() to get Kafka state
+    int seconds = 0;
+    while (seconds < 10) {
+        lockProducerData();
+        if (kafkaReadyAndTopicCorrect == 1) {
+            unlockProducerData();
+            break;
+        }
+        unlockProducerData();
+        usleep(1000*1000);
+        ++seconds;
+        serverLog(LL_NOTICE, "Main thread waiting for Kafka producer thread reporting kafka state ...");
+    }
+    lockProducerData();
+    if (kafkaReadyAndTopicCorrect != 1) {
+        serverLog(LL_WARNING, "Main thread check kafka state result failed for %d seconds!", seconds);
+        unlockProducerData();
+        exit(1);
+    } 
+    unlockProducerData();
+}    
+
+/*                                 */
+/*                                 */
+/* The following is about consumer */
+/*                                 */
+/*                                 */
+
+
+
+/* the event handler is executed from main thread, which is signaled by the pipe
+ * from the rockdb thread. When it is called by the eventloop, there is 
+ * a return result in rockJob */
+static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask) {
+    UNUSED(mask);
+    UNUSED(clientData);
+    UNUSED(eventLoop);
+    UNUSED(fd);
+
+    // clear pipe signal
+    char tmpUseBuf[1];
+    size_t n = read(server.stream_pipe_read, tmpUseBuf, 1);     
+    serverAssert(n == 1);
+
+    lockConsumerData();
+
+    int cnt = 0;
+
+    if(listLength(rcvMsgs) == 0) {
+        unlockConsumerData();
+        return;
+    }
+
+    listIter msg_li;
+    listNode *msg_ln;
+    listRewind(rcvMsgs, &msg_li);
+    while ((msg_ln = listNext(&msg_li))) {
+        sds msg = listNodeValue(msg_ln);
+
+        uint8_t node_id;
+        uint64_t client_id;
+        uint8_t dbid;
+        sds command;
+        list *args;
+
+        int ret = parse_msg(msg, &node_id, &client_id, &dbid, &command, &args);
+        ++cnt;
+        if (ret != C_OK) {
+            serverLog(LL_WARNING, "fatel error for parse message!");
+            exit(1);
+        }
+
+        // remove message
+        listDelNode(rcvMsgs, msg_ln);
+        sdsfree(msg);
+    }
+
+    unlockConsumerData();
+
+    serverLog(LL_WARNING, "parse cnt = %d", cnt);
 }
 
+/* signal main thread which will call streamConsumerSignalHandler() */
+static void signalMainThreadByPipeInConsumerThread() {
+    char tempBuf[1] = "a";
+    size_t n = write(server.stream_pipe_write, tempBuf, 1);
+    serverAssert(n == 1);
+}
+
+static void addRcvMsgInConsumerThread(size_t len, void *payload) {    
+    serverAssert(payload);
+
+    lockConsumerData();
+
+    sds copy = sdsnewlen(payload, len);
+    listAddNodeTail(rcvMsgs, copy);
+    if (listLength(rcvMsgs) >= 1000)
+        serverLog(LL_WARNING, "addRcvMsgInConsumerThread() rcvMsgs too long, list length = %ld", listLength(rcvMsgs));
+        
+    unlockConsumerData();
+}
+
+/* We need jump to the last msg offset main thread consumed */
+/* For debug reason, we set to the last offset of the topic/parition(0) */
+/*
+static void checkOffset(rd_kafka_t *rk, rd_kafka_topic_partition_list_t *subscription, rd_kafka_topic_partition_t* zeroPartition) {
+    rd_kafka_error_t *err;
+
+    err = rd_kafka_seek_partitions(rk, subscription, 1000);       // wait for 1 second
+    if (err)
+        serverPanic("jumpToOffset() failed for reason = %s", rd_kafka_err2str(rd_kafka_error_code(err)));
+    serverLog(LL_WARNING, "seek offset = %ld", zeroPartition->offset);
+}
+*/
+
+/* this is the consumer thread entrance */
+static void* entryInConsumerThread(void *arg) {
+    UNUSED(arg);
+
+    rd_kafka_t *rk;          /* Consumer instance handle */
+    rd_kafka_conf_t *conf;   /* Temporary configuration object */
+    rd_kafka_resp_err_t err; /* librdkafka API error code */
+    char errstr[512];        /* librdkafka API error reporting buffer */
+    rd_kafka_topic_partition_list_t *subscription; /* Subscribed topics */
+    rd_kafka_topic_partition_t *zeroPartion;
+
+    rcvMsgs = listCreate();
+
+    // generate uuid for groupid, so ervery consumer is a single group in kafka
+    char uuid[37];
+    uuid_t binuuid;
+    uuid_generate_random(binuuid);
+    uuid_unparse(binuuid, uuid);
+
+    conf = rd_kafka_conf_new();
+    if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrapBrokers, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() bootstrap.servers, reason = %s", errstr);
+    if (rd_kafka_conf_set(conf, "group.id", uuid, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() group.id, reason = %s", errstr);
+    // we can not retrieve message which is out of range
+    if (rd_kafka_conf_set(conf, "auto.offset.reset", "error", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() auto.offset.reset, reason = %s", errstr);
+    rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
+    if (!rk)
+        serverPanic("initKafkaConsumer failed for rd_kafka_new()");
+    conf = NULL; /* Configuration object is now owned, and freed, by the rd_kafka_t instance. */
+    rd_kafka_poll_set_consumer(rk);
+ 
+    subscription = rd_kafka_topic_partition_list_new(1);
+    zeroPartion = rd_kafka_topic_partition_list_add(subscription, bunnyRedisTopic, 0);
+    zeroPartion->offset = START_OFFSET;
+    /* Subscribe to the list of topics, NOTE: only one in the list of topics */
+    // err = rd_kafka_subscribe(rk, subscription);
+    err = rd_kafka_assign(rk, subscription);
+    if (err) 
+        serverPanic("initKafkaConsumer failed for rd_kafka_subscribe() reason = %s", rd_kafka_err2str(err));
+    rd_kafka_topic_partition_list_destroy(subscription);
+
+    // jump to the specific offset
+    // checkOffset(rk, subscription, zeroPartion);     // check the offset in zeroPartition, if fail stop 
+
+    while(1) {
+        rd_kafka_message_t *rkm = rd_kafka_consumer_poll(rk, 100);
+
+        if (!rkm) continue;     // timeout with no message 
+
+        if (rkm->err) {
+            if (rkm->err == RD_KAFKA_RESP_ERR__AUTO_OFFSET_RESET) {
+                serverLog(LL_WARNING, "offset %d for Broker: Offset out of range!!!", START_OFFSET);
+                exit(1);
+            }
+            serverLog(LL_WARNING, "Consumer error(but Kafka can handle): err = %d, reason = %s", rkm->err, rd_kafka_message_errstr(rkm));
+            rd_kafka_message_destroy(rkm);
+            continue;
+        }
+
+        // proper message
+        serverAssert(strcmp(rd_kafka_topic_name(rkm->rkt), bunnyRedisTopic) == 0 && rkm->len > 0);
+        addRcvMsgInConsumerThread(rkm->len, rkm->payload);
+        signalMainThreadByPipeInConsumerThread();   // notify main thread
+    
+        rd_kafka_message_destroy(rkm);
+    }
+
+    return NULL;
+}
+
+/* the function create a stream reader thread, which will read data from kafka 
+ * when stream reader thread read some write operations from kafka,
+ * it will write it to buffer (sync by spin lock) then notify main thread by pipe 
+ * because main thread maybe sleep in eventloop for events comming */
+void initStreamPipeAndStartConsumer() {
+    pthread_t consumer_thread;
+    int pipefds[2];
+
+    int spin_init_res = pthread_spin_init(&consumerLock, 0);
+    if (spin_init_res != 0)
+        serverPanic("Can not init consumer spin lock, error code = %d", spin_init_res);
+
+    if (pipe(pipefds) == -1) 
+        serverPanic("Can not create pipe for stream.");
+
+    server.stream_pipe_read = pipefds[0];
+    server.stream_pipe_write = pipefds[1];
+
+    if (aeCreateFileEvent(server.el, server.stream_pipe_read, 
+        AE_READABLE, streamConsumerSignalHandler,NULL) == AE_ERR) {
+        serverPanic("Unrecoverable error creating server.rock_pipe file event.");
+    }
+
+    if (pthread_create(&consumer_thread, NULL, entryInConsumerThread, NULL) != 0) {
+        serverPanic("Unable to create a consumer thread.");
+    }
+}

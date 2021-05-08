@@ -1,6 +1,17 @@
 
 用官网推荐的Kafka C Library, https://docs.confluent.io/platform/current/clients/index.html#, https://github.com/edenhill/librdkafka
 
+tool
+```
+# List topics
+./bin/kafka-topics.sh --list --zookeeper localhost:2181
+# List offsets:
+bin/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --time -1 --topic redisStreamWrite
+# delete a topic then recreate it
+bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite
+bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic redisStreamWrite
+```
+
 This README is just a fast *quick start* document. You can find more detailed documentation at [redis.io](https://redis.io).
 
 What is Redis?

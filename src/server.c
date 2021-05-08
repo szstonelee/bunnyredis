@@ -823,7 +823,7 @@ struct redisCommand redisCommandTable[] = {
      "admin no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
-    {"config",1,configCommand,-2,
+    {"config",0,configCommand,-2,
      "admin ok-loading ok-stale no-script",
      0,NULL,0,0,0,0,0,0},
 
@@ -3352,10 +3352,10 @@ void initServer(void) {
     /* Initialize ACL default password if it exists */
     ACLUpdateDefaultUserPassword(server.requirepass);
 
+    /* stream write producer init. NOTE: must before consumer init because main thread need it to check kafka state */
+    initKafkaProducer();
     /* stream write consumer init */
     initStreamPipeAndStartConsumer();
-    /* stream write producer init */
-    initKafkaProducer();
 
     /* init virtual client */
     server.virtual_client = createClient(NULL);
