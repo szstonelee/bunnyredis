@@ -13,6 +13,17 @@ bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 -
 # start kafka
 bin/zookeeper-server-start.sh config/zookeeper.properties
 bin/kafka-server-start.sh config/server.properties
+# compare Redis real server (linger.ms = 0)
+./redis-server --port 6380
+redis-benchmark -p 6380 -n 1000000 -t get
+redis-benchmark -p 6380 -n 200000 -t set
+redis-benchmark -p 6380 -n 1000000 -t get -d 900
+redis-benchmark -p 6380 -n 200000 -t set -d 900
+./bunny-server --nodeid 111
+redis-benchmark -n 1000000 -t get
+redis-benchmark -n 200000 -t set
+redis-benchmark -n 1000000 -t get -d 900
+redis-benchmark -n 200000 -t set -d 900
 ```
 
 This README is just a fast *quick start* document. You can find more detailed documentation at [redis.io](https://redis.io).

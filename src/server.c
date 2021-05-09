@@ -318,7 +318,7 @@ struct redisCommand redisCommandTable[] = {
      "write fast @list",
      0,NULL,1,1,1,0,0,0},
 
-    {"brpop",1,brpopCommand,-3,
+    {"brpop",-1,brpopCommand,-3,
      "write no-script @list @blocking",
      0,NULL,1,-2,1,0,0,0},
 
@@ -330,7 +330,7 @@ struct redisCommand redisCommandTable[] = {
      "write use-memory no-script @list @blocking",
      0,NULL,1,2,1,0,0,0},
 
-    {"blpop",1,blpopCommand,-3,
+    {"blpop",-1,blpopCommand,-3,
      "write no-script @list @blocking",
      0,NULL,1,-2,1,0,0,0},
 
@@ -5966,6 +5966,9 @@ int checkForSentinelMode(int argc, char **argv) {
 
 /* Function called at startup to load RDB or AOF file in memory. */
 void loadDataFromDisk(void) {
+    serverLog(LL_WARNING, "We do not support load RDB/AOF anymore!");
+    return;
+
     long long start = ustime();
     if (server.aof_state == AOF_ON) {
         if (loadAppendOnlyFile(server.aof_filename) == C_OK)

@@ -223,7 +223,7 @@ int checkAndSetStreamWriting(client *c) {
 
 // reference scripting.c luaRedisGenericCommand
 // right now for simplicity, we do not use cache
-// from networking.c processInlineBuffer(), I guess all argument is string object
+// from networking.c processInlineBuffer(), I guess all arguments are string object
 void execVritualCommand(uint8_t dbid, sds command, list *args) {
     struct redisCommand *cmd;
 
@@ -247,7 +247,7 @@ void execVritualCommand(uint8_t dbid, sds command, list *args) {
     }
 
     cmd = lookupCommand(c->argv[0]->ptr);
-    serverAssert(cmd && !(cmd->flags & CMD_RANDOM));
+    // serverAssert(cmd && !(cmd->flags & CMD_RANDOM));     // stream has such features in cmd flags
     c->cmd = c->lastcmd = cmd;
 
     /* Check the ACLs. */
@@ -408,7 +408,7 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrapBrokers,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() bootstrap.servers, reason = %s", errstr);
-    if (rd_kafka_conf_set(conf, "linger.ms", "1",
+    if (rd_kafka_conf_set(conf, "linger.ms", "0",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() linger.ms, reason = %s", errstr);
     // set time out to be infinite
