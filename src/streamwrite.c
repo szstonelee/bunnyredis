@@ -3,7 +3,9 @@
 #include <librdkafka/rdkafka.h>
 #include <uuid/uuid.h>
 
+#include "networking.h"
 #include "endianconv.h"
+#include "rock.h"
 
 // spin lock only run in Linux
 static pthread_spinlock_t consumerLock;     
@@ -139,12 +141,15 @@ int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid,
 // we create a virtual client which will execute a command in the virtual client context
 
 // reference server.c processCommand()
-// return C_ERR if the command check failed for some reason
+// return C_ERR if the command check failed for some reason, 
+//        so the client can go on to reply fail info to real client or execute QUIT command
+// return C_OK, the commmand check ok, 
+//        but the caller need to check c->streamWritng
 int checkAndSetStreamWriting(client *c) {
     serverAssert(c->streamWriting == STREAM_WRITE_INIT);
 
     // quit command is a shortcut
-    if (!strcasecmp(c->argv[0]->ptr,"quit")) return C_OK;
+    if (!strcasecmp(c->argv[0]->ptr,"quit")) return C_ERR;
 
     struct redisCommand *cmd = lookupCommand(c->argv[0]->ptr);
 
@@ -203,7 +208,7 @@ int checkAndSetStreamWriting(client *c) {
     }
 
     if (cmd->streamCmdCategory == STREAM_ENABLED_CMD)
-        c->streamWriting = STREAM_WRITE_WAITING;
+        c->streamWriting = STREAM_WRITE_WAITING;    // we set STREAM_WRITE_WAITING for the caller
 
     // recover client to saved info
     c->cmd = savedCmd;
@@ -219,24 +224,27 @@ int checkAndSetStreamWriting(client *c) {
 // reference scripting.c luaRedisGenericCommand
 // right now for simplicity, we do not use cache
 // from networking.c processInlineBuffer(), I guess all argument is string object
-void execVritualCommand() {
+void execVritualCommand(uint8_t dbid, sds command, list *args) {
     struct redisCommand *cmd;
 
-    // for test
-    uint8_t dbid = 0;
-    sds cmdArg = sdsnew("set");
-    sds keyArg = sdsnew("abc");
-    sds valArg = sdsnew("123456");
-    int argc = 3;
+    int argc = (int)(1 + listLength(args));
 
     client *c = server.virtual_client;
     serverAssert(dbid < server.dbnum);
     selectDb(c, dbid);
     c->argc = argc;
     c->argv = zmalloc(sizeof(robj*)*argc);
-    c->argv[0] = createStringObject(cmdArg, sdslen(cmdArg));
-    c->argv[1] = createStringObject(keyArg, sdslen(keyArg));
-    c->argv[2] = createStringObject(valArg, sdslen(valArg));
+    c->argv[0] = createStringObject(command, sdslen(command));
+
+    listIter li;
+    listNode *ln;
+    listRewind(args, &li);
+    int index = 1;
+    while ((ln = listNext(&li))) {
+        sds arg = listNodeValue(ln);
+        c->argv[index] = createStringObject(arg, sdslen(arg));
+        ++index;
+    }
 
     cmd = lookupCommand(c->argv[0]->ptr);
     serverAssert(cmd && !(cmd->flags & CMD_RANDOM));
@@ -260,10 +268,6 @@ void execVritualCommand() {
     c->reply_bytes = 0;
 
 // cleanup:
-    sdsfree(cmdArg);
-    sdsfree(keyArg);
-    sdsfree(valArg);
-
     for (int j = 0; j < c->argc; ++j) {
         robj* obj = c->argv[j];
         decrRefCount(obj);
@@ -404,6 +408,9 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrapBrokers,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() bootstrap.servers, reason = %s", errstr);
+    if (rd_kafka_conf_set(conf, "linger.ms", "1",
+                          errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() linger.ms, reason = %s", errstr);
     // set time out to be infinite
     if (rd_kafka_conf_set(conf, "message.timeout.ms", "0",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
@@ -488,7 +495,41 @@ void initKafkaProducer() {
 /*                                 */
 /*                                 */
 
+static void processCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
+                                         sds command, list *args) {
+    client *c = NULL;
 
+    if (node_id == server.node_id) {
+        dictEntry *de = dictFind(server.clientIdTable, (const void*)client_id);
+        if (de) c = (client*)de->v.val;
+    }
+
+    // serverLog(LL_WARNING, "status = %s, node_id = %d, client_id = %d, dbid = %d, command = %s", 
+    //        c ? "concrete" : "virtual", (int)node_id, (int)client_id, (int)dbid, command);
+
+    if (c) {
+        // c is waiting for the stream command
+        serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
+        serverAssert(strcasecmp(c->argv[0]->ptr, command) == 0);
+        serverAssert((size_t)c->argc == 1 + listLength(args));
+        c->streamWriting = STREAM_WRITE_FINISH;
+        checkAndSetRockKeyNumber(c);
+        if (c->rockKeyNumber == 0)
+            processCommandAndResetClient(c);
+    } else {
+        execVritualCommand(dbid, command, args);
+    }
+    // free command and args
+    sdsfree(command);
+    listIter li;
+    listNode *ln;
+    listRewind(args, &li);
+    while ((ln = listNext(&li))) {
+        sds arg = listNodeValue(ln);
+        sdsfree(arg);
+    }
+    listRelease(args);
+}
 
 /* the event handler is executed from main thread, which is signaled by the pipe
  * from the rockdb thread. When it is called by the eventloop, there is 
@@ -505,8 +546,6 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
     serverAssert(n == 1);
 
     lockConsumerData();
-
-    int cnt = 0;
 
     if(listLength(rcvMsgs) == 0) {
         unlockConsumerData();
@@ -526,11 +565,12 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
         list *args;
 
         int ret = parse_msg(msg, &node_id, &client_id, &dbid, &command, &args);
-        ++cnt;
         if (ret != C_OK) {
             serverLog(LL_WARNING, "fatel error for parse message!");
             exit(1);
         }
+
+        processCommandForStreamWrite(node_id, client_id, dbid, command, args);
 
         // remove message
         listDelNode(rcvMsgs, msg_ln);
@@ -538,8 +578,6 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
     }
 
     unlockConsumerData();
-
-    serverLog(LL_WARNING, "parse cnt = %d", cnt);
 }
 
 /* signal main thread which will call streamConsumerSignalHandler() */

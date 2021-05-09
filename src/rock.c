@@ -24,8 +24,9 @@ void _resumeRockClient(client *c) {
 
 /* When command be executed, it will chck the arguments for all the keys which value is in RocksDB.
  * If value in RocksDB, it will set rockKeyNumber > 0 and add a task for another thread to read from RocksDB
- * Task will be done in async mode */
-void checkCallValueInRock(client *c) {
+ * Task will be done in async mode 
+ * NOTE: the client c could by virtual client */
+void checkAndSetRockKeyNumber(client *c) {
 	serverAssert(c);
 	serverAssert(c->streamWriting != STREAM_WRITE_WAITING);
 	serverAssert(c->rockKeyNumber == 0);
@@ -50,7 +51,7 @@ void checkCallValueInRock(client *c) {
  * otherwise, client go on sleep for rocks */
 void checkThenResumeRockClient(client *c) {
     serverAssert(c->rockKeyNumber == 0);
-    checkCallValueInRock(c);
+    checkAndSetRockKeyNumber(c);
     if (c->rockKeyNumber == 0) 
         _resumeRockClient(c);
 }

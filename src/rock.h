@@ -4,7 +4,7 @@
 #include "server.h"
 
 /* API */
-void checkCallValueInRock(client *c);
+void checkAndSetRockKeyNumber(client *c);
 void processInputBuffer(client *c);   // from networking.c
 
 #endif

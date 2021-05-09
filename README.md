@@ -10,6 +10,9 @@ bin/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 -
 # delete a topic then recreate it
 bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite
 bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic redisStreamWrite
+# start kafka
+bin/zookeeper-server-start.sh config/zookeeper.properties
+bin/kafka-server-start.sh config/server.properties
 ```
 
 This README is just a fast *quick start* document. You can find more detailed documentation at [redis.io](https://redis.io).

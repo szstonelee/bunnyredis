@@ -1088,6 +1088,11 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
         return;
     }
 
+    // NOTE: we can not use the following code in createClient() 
+    // because serverIdTable has not been inited in server.c initServer()
+    serverAssert(dictFind(server.clientIdTable, (const void*)c->id) == NULL);
+    dictReplace(server.clientIdTable, (void *)c->id, c);
+
     /* Last chance to keep flags */
     c->flags |= flags;
 
@@ -1335,6 +1340,13 @@ void freeClient(client *c) {
             return;
         }
     }
+
+    // NOTE: some clients is belong to slave or virtual(like script), so these clients are not in server.cliendIdTable
+    // We need to delete the client from server.clientIdTable which is valid
+    // the code until the end does not have any "return" statement which guarantee the client will be destroyed
+    // after the client was removed from server.clientIdTable first
+    if (server.clientIdTable)
+        dictDelete(server.clientIdTable, (const void*)c->id);        // NOTE: may be not found and the return value is DICT_ERR
 
     /* Log link disconnection with slave */
     if (getClientType(c) == CLIENT_TYPE_SLAVE) {
@@ -2124,20 +2136,15 @@ void processInputBuffer(client *c) {
                 break;
             }
 
-            int jumpToExec = 0;
-            // check streamWrite First
-            if(c->streamWriting == STREAM_WRITE_INIT) {
-                if (checkAndSetStreamWriting(c) == C_ERR)
-                    // we can skip checkCallValueInRock because processCommandAndResetClient()
-                    // will fail which is guaranteed by checkAndSetStreamWriting()
-                    jumpToExec = 1;
-                else if (c->streamWriting == STREAM_WRITE_WAITING)
-                    break;
-            }
-            
-            if (!jumpToExec) {
-                /* We are finally ready to execute the command. */
-                checkCallValueInRock(c);        // before execute the command, we need check value in RocksDB
+            // check and set streamWriting first
+            int check_stream_res = checkAndSetStreamWriting(c);
+            if (check_stream_res == C_OK && c->streamWriting == STREAM_WRITE_WAITING)
+                break;
+
+            // if check_stream_res is C_ERR, we pass through to processCommandAndResetClient()
+            // because it will be success for EXIT command or it will fail for the ACL, commant not match
+            if (check_stream_res != C_ERR) {
+                checkAndSetRockKeyNumber(c);
                 if (c->rockKeyNumber > 0) break;
             }
 

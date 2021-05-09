@@ -79,7 +79,7 @@ double R_Zero, R_PosInf, R_NegInf, R_Nan;
 /*================================= Globals ================================= */
 
 /* Global vars */
-struct redisServer server; /* Server global state */
+struct redisServer server = {.clientIdTable = NULL}; /* Server global state */
 
 /* Our command table.
  *
@@ -771,7 +771,8 @@ struct redisCommand redisCommandTable[] = {
      "admin no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
-    {"flushdb",1,flushdbCommand,-1,
+    // this is for temporary test, we need chang 0 to 1 later
+    {"flushdb",0,flushdbCommand,-1,
      "write @keyspace @dangerous",
      0,NULL,0,0,0,0,0,0},
 
@@ -1344,6 +1345,31 @@ uint64_t dictEncObjHash(const void *key) {
     }
 }
 
+/* for client id to client* hash table */
+uint64_t dictUint64Hash(const void *key) {
+    return (uint64_t)key;
+}
+
+/* for client id to client* hash table */
+int dictUint64Compare(void *privdata, const void *key1, const void *key2)
+{
+    DICT_NOTUSED(privdata);
+
+    return key1 == key2;    // key1 and key2 pointer value actually is uint64_t
+}
+
+void *dictUint64KeyDup(void *privdata, const void *key) {
+    UNUSED(privdata);
+
+    return (void*)key;
+}
+
+void *dictUint64ValDup(void *privdata, const void *obj) {
+    UNUSED(privdata);
+
+    return (void*)obj;
+}
+
 /* Return 1 if currently we allow dict to expand. Dict may allocate huge
  * memory to contain hash buckets when dict expands, that may lead redis
  * rejects user's requests or evicts some keys, we can stop dict to expand
@@ -1539,6 +1565,17 @@ dictType replScriptCacheDictType = {
     NULL,                       /* val dup */
     dictSdsKeyCaseCompare,      /* key compare */
     dictSdsDestructor,          /* key destructor */
+    NULL,                       /* val destructor */
+    NULL                        /* allow to expand */
+};
+
+/* client id hash table which map client id -- uint64_t to client* pointer */
+dictType clientIdDictType = {
+    dictUint64Hash,             /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    NULL,                       /* key compare */
+    NULL,                       /* key destructor, we stored the clientid in the key pointer */
     NULL,                       /* val destructor */
     NULL                        /* allow to expand */
 };
@@ -3360,6 +3397,9 @@ void initServer(void) {
     /* init virtual client */
     server.virtual_client = createClient(NULL);
     server.virtual_client->user = NULL;     // admin user
+
+    /* init client id to client* table */
+    server.clientIdTable = dictCreate(&clientIdDictType, NULL);
 }
 
 /* Some steps in server initialization need to be done last (after modules
