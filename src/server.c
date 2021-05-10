@@ -79,7 +79,7 @@ double R_Zero, R_PosInf, R_NegInf, R_Nan;
 /*================================= Globals ================================= */
 
 /* Global vars */
-struct redisServer server = {.clientIdTable = NULL}; /* Server global state */
+struct redisServer server = {.clientIdTable = NULL, .streamCurrentClient = NULL}; /* Server global state */
 
 /* Our command table.
  *

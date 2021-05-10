@@ -31,6 +31,14 @@ void checkAndSetRockKeyNumber(client *c) {
 	serverAssert(c->streamWriting != STREAM_WRITE_WAITING);
 	serverAssert(c->rockKeyNumber == 0);
 
+/*
+    if (c->argc > 1 && 
+        strcasecmp("set", c->argv[0]->ptr) == 0 &&
+        strcasecmp("abc", c->argv[1]->ptr) == 0)
+        c->rockKeyNumber = 1;       // for test
+*/
+
+
 	// for test
 	/*
 	char *cmd = c->argv[0]->ptr;

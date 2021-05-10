@@ -46,6 +46,10 @@ static void unlockProducerData() {
     serverAssert(res == 0);
 }
 
+static void freeArgAsSdsString(void *arg) {
+    sdsfree(arg);
+}
+
 /* main thread call this to add command to sndMsgs */
 /* We think every parameter (including command name) stored in client argv is String Object */
 static void addCommandToStreamWrite(client *c) {
@@ -221,19 +225,21 @@ int checkAndSetStreamWriting(client *c) {
     return C_OK;
 }
 
-// reference scripting.c luaRedisGenericCommand
-// right now for simplicity, we do not use cache
-// from networking.c processInlineBuffer(), I guess all arguments are string object
-void execVritualCommand(uint8_t dbid, sds command, list *args) {
-    struct redisCommand *cmd;
+/* set virtual client context for command, dbid ars so it can call execVritualCommand() directly later */
+/* args is not like c->args, it exclude the first command name and it is based on sds string not robj* */
+static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
+    client *c = server.virtual_client;
+
+    int select_res = selectDb(c, dbid);
+    serverAssert(select_res == C_OK);
 
     int argc = (int)(1 + listLength(args));
-
-    client *c = server.virtual_client;
-    serverAssert(dbid < server.dbnum);
-    selectDb(c, dbid);
+    serverAssert(c->argc == 0);
     c->argc = argc;
+
+    serverAssert(c->argv == NULL);
     c->argv = zmalloc(sizeof(robj*)*argc);
+
     c->argv[0] = createStringObject(command, sdslen(command));
 
     listIter li;
@@ -245,20 +251,44 @@ void execVritualCommand(uint8_t dbid, sds command, list *args) {
         c->argv[index] = createStringObject(arg, sdslen(arg));
         ++index;
     }
-
+    
+    struct redisCommand *cmd;
     cmd = lookupCommand(c->argv[0]->ptr);
-    // serverAssert(cmd && !(cmd->flags & CMD_RANDOM));     // stream has such features in cmd flags
+    serverAssert(cmd);
     c->cmd = c->lastcmd = cmd;
 
     /* Check the ACLs. */
     int acl_errpos;
     int acl_retval = ACLCheckAllPerm(c,&acl_errpos);
     serverAssert(acl_retval == ACL_OK);
+}
 
-    /* Run the command */
-    int call_flags = CMD_CALL_SLOWLOG | CMD_CALL_STATS;
-    call(c,call_flags);
-    serverAssert((c->flags & CLIENT_BLOCKED) == 0);
+/* when concreate client is destroyed, we need to transfer its context to virtual context */ 
+void setVirtualContextFromConcreteClient(client *concrete) {
+    serverAssert(concrete != server.virtual_client);
+    serverAssert(server.streamCurrentClient == concrete);
+
+    serverAssert(concrete->db->id >= 0 && concrete->db->id < server.dbnum);
+    uint8_t dbid = (uint8_t)concrete->db->id;
+    sds command = concrete->argv[0]->ptr;
+
+    list *args = listCreate();
+    for (int i = 1; i < concrete->argc; ++i) {
+        sds arg = sdsnewlen(concrete->argv[i]->ptr, sdslen(concrete->argv[i]->ptr));
+        listAddNodeTail(args, arg);
+    }
+
+    setVirtualClinetContext(dbid, command, args);
+    server.streamCurrentClient = server.virtual_client;     // switch to virtual client
+    server.virtual_client->rockKeyNumber = concrete->rockKeyNumber;     // do not forget to set the rockyNumber
+
+    // clean up
+    listSetFreeMethod(args, freeArgAsSdsString);
+    listRelease(args);
+}
+
+static void freeVirtualClientContext() {
+    client* c = server.virtual_client;
 
     // deal with reply. We do not need any reply info
     while(listLength(c->reply)) {
@@ -267,7 +297,7 @@ void execVritualCommand(uint8_t dbid, sds command, list *args) {
     c->bufpos = 0;
     c->reply_bytes = 0;
 
-// cleanup:
+    // deal with c->args
     for (int j = 0; j < c->argc; ++j) {
         robj* obj = c->argv[j];
         decrRefCount(obj);
@@ -278,6 +308,20 @@ void execVritualCommand(uint8_t dbid, sds command, list *args) {
     c->argv = NULL;
 }
 
+// reference scripting.c luaRedisGenericCommand
+// right now for simplicity, we do not use cache
+// from networking.c processInlineBuffer(), I guess all arguments are string object
+void execVirtualCommand() {
+    /* Run the command */
+    int call_flags = CMD_CALL_SLOWLOG | CMD_CALL_STATS;
+    call(server.virtual_client, call_flags);
+    serverAssert((server.virtual_client->flags & CLIENT_BLOCKED) == 0);
+
+    // clean up
+    serverAssert(server.streamCurrentClient == server.virtual_client);
+    server.streamCurrentClient = NULL;
+    freeVirtualClientContext();
+}
 
 /*                                 */
 /*                                 */
@@ -495,40 +539,42 @@ void initKafkaProducer() {
 /*                                 */
 /*                                 */
 
-static void processCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
+/* main thread will deal each commmand with a streamWrite message here */
+static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
                                          sds command, list *args) {
-    client *c = NULL;
+
+    serverAssert(server.streamCurrentClient == NULL);
+
+    client *c = server.virtual_client;
 
     if (node_id == server.node_id) {
         dictEntry *de = dictFind(server.clientIdTable, (const void*)client_id);
-        if (de) c = (client*)de->v.val;
+        if (de) c = (client*)de->v.val;     // found concreate client
     }
 
-    // serverLog(LL_WARNING, "status = %s, node_id = %d, client_id = %d, dbid = %d, command = %s", 
-    //        c ? "concrete" : "virtual", (int)node_id, (int)client_id, (int)dbid, command);
+    server.streamCurrentClient = c;
 
-    if (c) {
-        // c is waiting for the stream command
+    if (c != server.virtual_client) {
         serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
         serverAssert(strcasecmp(c->argv[0]->ptr, command) == 0);
         serverAssert((size_t)c->argc == 1 + listLength(args));
         c->streamWriting = STREAM_WRITE_FINISH;
         checkAndSetRockKeyNumber(c);
         if (c->rockKeyNumber == 0)
-            processCommandAndResetClient(c);
+            processCommandAndResetClient(c);        // resume the excecution of concrete client and clear server.streamCurrentClient
     } else {
-        execVritualCommand(dbid, command, args);
+        setVirtualClinetContext(dbid, command, args);
+        checkAndSetRockKeyNumber(c);
+        if (c->rockKeyNumber == 0)
+            execVirtualCommand();       // resume the execution of virtual client and clear server.streamCurrentClient
     }
+
     // free command and args
     sdsfree(command);
-    listIter li;
-    listNode *ln;
-    listRewind(args, &li);
-    while ((ln = listNext(&li))) {
-        sds arg = listNodeValue(ln);
-        sdsfree(arg);
-    }
+    listSetFreeMethod(args, freeArgAsSdsString);
     listRelease(args);
+
+    return c;
 }
 
 /* the event handler is executed from main thread, which is signaled by the pipe
@@ -545,11 +591,16 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
     size_t n = read(server.stream_pipe_read, tmpUseBuf, 1);     
     serverAssert(n == 1);
 
+    if (server.streamCurrentClient && server.streamCurrentClient->rockKeyNumber > 0)
+        return;     // current stream client has not finshed for rock key
+
+    serverAssert(server.streamCurrentClient == NULL);
+
     lockConsumerData();
 
     if(listLength(rcvMsgs) == 0) {
         unlockConsumerData();
-        return;
+        return;     // no message to deal with
     }
 
     listIter msg_li;
@@ -564,17 +615,21 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
         sds command;
         list *args;
 
+        // NOTE: parse_msg will allocate memory resource for command and args
         int ret = parse_msg(msg, &node_id, &client_id, &dbid, &command, &args);
         if (ret != C_OK) {
             serverLog(LL_WARNING, "fatel error for parse message!");
             exit(1);
         }
 
-        processCommandForStreamWrite(node_id, client_id, dbid, command, args);
+        // NOTE: command and args will be cleared
+        client *c = processCommandForStreamWrite(node_id, client_id, dbid, command, args);
 
-        // remove message
-        listDelNode(rcvMsgs, msg_ln);
+        // remove and clean message resource
         sdsfree(msg);
+        listDelNode(rcvMsgs, msg_ln);      
+
+        if (c->rockKeyNumber) break;  // if stream write block by rock, we need to exit the message loop
     }
 
     unlockConsumerData();

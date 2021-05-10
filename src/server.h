@@ -1648,6 +1648,8 @@ struct redisServer {
     unsigned int node_id;    /* distinct node id is the cluster which is defined from config when start server */
 
     dict *clientIdTable;    /* client id to client* hash table */
+
+    client* streamCurrentClient;    /* right now stream client. NOTE: maybe virtual client */
 };
 
 #define MAX_KEYS_BUFFER 256

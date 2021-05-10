@@ -3,8 +3,9 @@
 #define __STREAMWRITE_H
 
 void initStreamPipeAndStartConsumer();
-void execVritualCommand();
+void execVirtualCommand();
 int checkAndSetStreamWriting(client *c);
 void initKafkaProducer();
+void setVirtualContextFromConcreteClient(client *concrete);
 
 #endif
