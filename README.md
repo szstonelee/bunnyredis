@@ -9,6 +9,7 @@ tool
 bin/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --time -1 --topic redisStreamWrite
 # delete a topic then recreate it
 bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite
+export JMX_PORT=9999
 bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic redisStreamWrite
 # start kafka
 bin/zookeeper-server-start.sh config/zookeeper.properties

@@ -455,6 +455,8 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "linger.ms", "0",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() linger.ms, reason = %s", errstr);
+    if (rd_kafka_conf_set(conf, "allow.auto.create.topics", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() allow.auto.create.topics, reason = %s", errstr);
     // set time out to be infinite
     if (rd_kafka_conf_set(conf, "message.timeout.ms", "0",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
@@ -692,6 +694,8 @@ static void* entryInConsumerThread(void *arg) {
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() bootstrap.servers, reason = %s", errstr);
     if (rd_kafka_conf_set(conf, "group.id", uuid, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() group.id, reason = %s", errstr);
+    if (rd_kafka_conf_set(conf, "allow.auto.create.topics", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() allow.auto.create.topics, reason = %s", errstr);
     // we can not retrieve message which is out of range
     if (rd_kafka_conf_set(conf, "auto.offset.reset", "error", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() auto.offset.reset, reason = %s", errstr);
