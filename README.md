@@ -26,6 +26,12 @@ redis-benchmark -n 1000000 -t get -d 900
 redis-benchmark -n 200000 -t set -d 900
 ```
 
+Tip: list special character name and delete it
+```
+ls -iL -all
+find . -inum <your_inode_number> -delete
+```
+
 This README is just a fast *quick start* document. You can find more detailed documentation at [redis.io](https://redis.io).
 
 What is Redis?
