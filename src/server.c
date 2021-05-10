@@ -3389,17 +3389,17 @@ void initServer(void) {
     /* Initialize ACL default password if it exists */
     ACLUpdateDefaultUserPassword(server.requirepass);
 
+    /* init virtual client. NOTE: need to do before the following Kafka initinization because threads */
+    server.virtual_client = createClient(NULL);
+    server.virtual_client->user = NULL;     // admin user
+    server.virtual_client->id = UINT64_MAX;     // special client id for virtual client
+    /* init client id to client* table */
+    server.clientIdTable = dictCreate(&clientIdDictType, NULL);
+
     /* stream write producer init. NOTE: must before consumer init because main thread need it to check kafka state */
     initKafkaProducer();
     /* stream write consumer init */
     initStreamPipeAndStartConsumer();
-
-    /* init virtual client */
-    server.virtual_client = createClient(NULL);
-    server.virtual_client->user = NULL;     // admin user
-
-    /* init client id to client* table */
-    server.clientIdTable = dictCreate(&clientIdDictType, NULL);
 }
 
 /* Some steps in server initialization need to be done last (after modules
@@ -6413,8 +6413,8 @@ int main(int argc, char **argv) {
                 exit(1);
             }
         }
-        if (server.ipfd.count > 0 || server.tlsfd.count > 0)
-            serverLog(LL_NOTICE,"Ready to accept connections");
+        if (server.ipfd.count > 0 || server.tlsfd.count > 0) 
+            serverLog(LL_NOTICE,"Ready to accept connections");        
         if (server.sofd > 0)
             serverLog(LL_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {

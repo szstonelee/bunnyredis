@@ -145,9 +145,11 @@ int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid,
 // we create a virtual client which will execute a command in the virtual client context
 
 // reference server.c processCommand()
-// return C_ERR if the command check failed for some reason, 
+// return C_ERR if the command check failed (and will exec without data modification but reply error info) 
+//        or the command is "quit" COMMAND, 
 //        so the client can go on to reply fail info to real client or execute QUIT command
-// return C_OK, the commmand check ok, 
+// return C_OK, the commmand check ok. 
+//        If the command is in the stream catagory which needs to be streamed, it will set  STREAM_WRITE_WAITING for concrete client
 //        but the caller need to check c->streamWritng
 int checkAndSetStreamWriting(client *c) {
     serverAssert(c->streamWriting == STREAM_WRITE_INIT);
@@ -211,7 +213,7 @@ int checkAndSetStreamWriting(client *c) {
         return C_ERR;        
     }
 
-    if (cmd->streamCmdCategory == STREAM_ENABLED_CMD)
+    if (cmd->streamCmdCategory == STREAM_ENABLED_CMD && c != server.virtual_client)
         c->streamWriting = STREAM_WRITE_WAITING;    // we set STREAM_WRITE_WAITING for the caller
 
     // recover client to saved info
@@ -458,7 +460,7 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "allow.auto.create.topics", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() allow.auto.create.topics, reason = %s", errstr);
     // set time out to be infinite
-    if (rd_kafka_conf_set(conf, "message.timeout.ms", "0",
+    if (rd_kafka_conf_set(conf, "message.timeout.ms", "1",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.timeout.ms, reason = %s", errstr);
     if (rd_kafka_conf_set(conf, "enable.idempotence", "true",
@@ -543,7 +545,7 @@ void initKafkaProducer() {
 
 /* main thread will deal each commmand with a streamWrite message here */
 static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
-                                         sds command, list *args) {
+                                            sds command, list *args) {
 
     serverAssert(server.streamCurrentClient == NULL);
 
@@ -560,15 +562,19 @@ static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id,
         serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
         serverAssert(strcasecmp(c->argv[0]->ptr, command) == 0);
         serverAssert((size_t)c->argc == 1 + listLength(args));
+
         c->streamWriting = STREAM_WRITE_FINISH;
         checkAndSetRockKeyNumber(c);
         if (c->rockKeyNumber == 0)
-            processCommandAndResetClient(c);        // resume the excecution of concrete client and clear server.streamCurrentClient
+            // resume the excecution of concrete client and clear server.streamCurrentClient
+            processCommandAndResetClient(c);        
+
     } else {
         setVirtualClinetContext(dbid, command, args);
         checkAndSetRockKeyNumber(c);
         if (c->rockKeyNumber == 0)
-            execVirtualCommand();       // resume the execution of virtual client and clear server.streamCurrentClient
+            // resume the execution of virtual client and clear server.streamCurrentClient
+            execVirtualCommand();       
     }
 
     // free command and args
@@ -616,7 +622,6 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
         uint8_t dbid;
         sds command;
         list *args;
-
         // NOTE: parse_msg will allocate memory resource for command and args
         int ret = parse_msg(msg, &node_id, &client_id, &dbid, &command, &args);
         if (ret != C_OK) {

@@ -1,6 +1,8 @@
 
 用官网推荐的Kafka C Library, https://docs.confluent.io/platform/current/clients/index.html#, https://github.com/edenhill/librdkafka
 
+NOTE: when start bunny-redis use --nodeid=<distinct node id> or clear the topic in Kafka
+
 tool
 ```
 # List topics
@@ -8,11 +10,12 @@ tool
 # List offsets:
 bin/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --time -1 --topic redisStreamWrite
 # delete a topic then recreate it
-bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite
-export JMX_PORT=9999
+bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite; \
 bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic redisStreamWrite
 # start kafka
+export JMX_PORT=9998
 bin/zookeeper-server-start.sh config/zookeeper.properties
+export JMX_PORT=9999
 bin/kafka-server-start.sh config/server.properties
 # compare Redis real server (linger.ms = 0)
 ./redis-server --port 6380
