@@ -65,6 +65,7 @@
 
 #include "rock.h"
 #include "streamwrite.h"
+#include "rockevict.h"
 
 /* Our shared "common" objects */
 
@@ -1108,6 +1109,10 @@ struct redisCommand redisCommandTable[] = {
 
     {"failover",-1,failoverCommand,-1,
      "admin no-script ok-stale",
+     0,NULL,0,0,0,0,0,0},
+
+    {"debugevict",0,debugEvictCommand,-1,
+     "read-only fast @connection",
      0,NULL,0,0,0,0,0,0}
 };
 
@@ -2661,6 +2666,15 @@ void createSharedObjects(void) {
      * string in string comparisons for the ZRANGEBYLEX command. */
     shared.minstring = sdsnew("minstring");
     shared.maxstring = sdsnew("maxstring");
+
+    /* shared object which indicating the value of key(string) in rocksdb */
+    shared.keyRockVal = createObject(OBJ_STRING, NULL);
+    shared.keyRockVal->encoding = OBJ_ENCODING_INT;
+    shared.keyRockVal->ptr = (void *)250;          /* 250 means FOOL in Chinese context. */
+    makeObjectShared(shared.keyRockVal);
+
+    /* shard object which idicating the value of field in hash type in rocksdb */
+    shared.fieldRockVal = sdsnew("fieldRockVal");
 }
 
 void initServerConfig(void) {
@@ -3272,6 +3286,8 @@ void initServer(void) {
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
         server.db[j].defrag_later = listCreate();
+        server.db[j].stat_key_str_cnt = 0;
+        server.db[j].stat_key_str_rockval_cnt = 0;
         listSetFreeMethod(server.db[j].defrag_later,(void (*)(void*))sdsfree);
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */
@@ -3400,6 +3416,9 @@ void initServer(void) {
     initKafkaProducer();
     /* stream write consumer init */
     initStreamPipeAndStartConsumer();
+
+    // eviction
+    evictKeyPoolAlloc(); /* Initialize the LRU keys pool. */
 }
 
 /* Some steps in server initialization need to be done last (after modules

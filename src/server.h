@@ -729,6 +729,9 @@ typedef struct redisDb {
     long long avg_ttl;          /* Average TTL, just for stats */
     unsigned long expires_cursor; /* Cursor of the active expire cycle. */
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
+
+    long long stat_key_str_cnt;             /* stats for key number in the db of type string */
+    long long stat_key_str_rockval_cnt;     /* stats for the number if key string which value in RocksDB */
 } redisDb;
 
 /* Declare database backup that include redis main DBs and slots to keys map.
@@ -1007,6 +1010,8 @@ struct sharedObjectsStruct {
     *mbulkhdr[OBJ_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
     *bulkhdr[OBJ_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
     sds minstring, maxstring;
+    robj *keyRockVal;    /* special shared object indicating the value saved for key (right now type is String) in rocksdb */
+    sds  fieldRockVal;  /* special shared object indicating the value saved for field of hash type in rocksdb */
 };
 
 /* ZSETs use a specialized version of Skiplists */
@@ -1650,6 +1655,8 @@ struct redisServer {
     dict *clientIdTable;    /* client id to client* hash table */
 
     client* streamCurrentClient;    /* right now stream client. NOTE: maybe virtual client */
+
+    unsigned long long bunnymem;   /* Max number of memory bytes to use, at most is the size of all keys */
 };
 
 #define MAX_KEYS_BUFFER 256
@@ -2481,6 +2488,7 @@ size_t getSlaveKeyWithExpireCount(void);
 
 /* evict.c -- maxmemory handling and LRU eviction. */
 void evictionPoolAlloc(void);
+void evictKeyPoolAlloc(void);
 #define LFU_INIT_VAL 5
 unsigned long LFUGetTimeInMinutes(void);
 uint8_t LFULogIncr(uint8_t value);

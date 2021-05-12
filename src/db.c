@@ -185,8 +185,8 @@ robj *lookupKeyWriteOrReply(client *c, robj *key, robj *reply) {
     return o;
 }
 
-/* Add the key to the DB. It's up to the caller to increment the reference
- * counter of the value if needed.
+/* Add the key to the DB. It's up to the caller to increment the reference 
+ * counter of the value if needed. 
  *
  * The program is aborted if the key already exists. */
 void dbAdd(redisDb *db, robj *key, robj *val) {
@@ -196,6 +196,8 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
     serverAssertWithInfo(NULL,key,retval == DICT_OK);
     signalKeyAsReady(db, key, val->type);
     if (server.cluster_enabled) slotToKeyAdd(key->ptr);
+
+    if (val->type == OBJ_STRING) ++db->stat_key_str_cnt;
 }
 
 /* This is a special version of dbAdd() that is used only when loading
@@ -227,6 +229,14 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     serverAssertWithInfo(NULL,key,de != NULL);
     dictEntry auxentry = *de;
     robj *old = dictGetVal(de);
+    if (old->type == OBJ_STRING) {
+        serverAssert(db->stat_key_str_cnt);
+        --db->stat_key_str_cnt;
+        if (old == shared.keyRockVal) {
+            serverAssert(db->stat_key_str_rockval_cnt);
+            --db->stat_key_str_rockval_cnt;
+        }
+    }
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
         val->lru = old->lru;
     }
@@ -318,6 +328,14 @@ int dbSyncDelete(redisDb *db, robj *key) {
     dictEntry *de = dictUnlink(db->dict,key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
+        if (val->type == OBJ_STRING) {
+            serverAssert(db->stat_key_str_cnt);
+            --db->stat_key_str_cnt;
+            if (val == shared.keyRockVal) {
+                serverAssert(db->stat_key_str_rockval_cnt);
+                --db->stat_key_str_rockval_cnt;
+            }
+        }
         /* Tells the module that the key has been unlinked from the database. */
         moduleNotifyKeyUnlink(key,val);
         dictFreeUnlinkedEntry(db->dict,de);

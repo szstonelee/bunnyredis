@@ -23,9 +23,6 @@ static const char *bunnyRedisTopic = "redisStreamWrite";
 list* sndMsgs;  // producer and main thread contented data
 list* rcvMsgs;  // consumer and main thread contented data
 
-// long long startTime;
-// long long endTime;
-
 static void lockConsumerData() {
     int res = pthread_spin_lock(&consumerLock);
     serverAssert(res == 0);
@@ -134,7 +131,6 @@ int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid,
 
         listAddNodeTail(*args, arg);
     }
-
 
     if (cnt != msg_len) return C_ERR;
 
@@ -457,8 +453,6 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "linger.ms", "0",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() linger.ms, reason = %s", errstr);
-    if (rd_kafka_conf_set(conf, "allow.auto.create.topics", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() allow.auto.create.topics, reason = %s", errstr);
     // set time out to be infinite
     if (rd_kafka_conf_set(conf, "message.timeout.ms", "1",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)

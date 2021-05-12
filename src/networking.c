@@ -37,6 +37,7 @@
 
 #include "rock.h"
 #include "streamwrite.h"
+#include "rockevict.h"
 
 static void setProtocolError(const char *errstr, client *c);
 int postponeClientRead(client *c);
@@ -2143,13 +2144,25 @@ void processInputBuffer(client *c) {
                 break;
             }
 
-            // check and set streamWriting first
+            // NOTE: for test of injecting lots of keys, you can commout out the following code and then enbale it again
+            /*
+            if (checkMemInProcessBuffer(c) != C_OK) {
+                rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
+                   c->argv[0]->ptr);
+                commandProcessed(c);
+                continue;
+            }
+            */
+
+            // check and set streamWriting
             int check_stream_res = checkAndSetStreamWriting(c);
             if (check_stream_res == C_OK && c->streamWriting == STREAM_WRITE_WAITING)
                 break;
 
-            // if check_stream_res is C_ERR, we pass through to processCommandAndResetClient()
-            // because it will be success for EXIT command or it will fail for the ACL, commant not match
+            // If check_stream_res is C_ERR, we can pass through to processCommandAndResetClient()
+            //    because it will be success for EXIT command 
+            //    or it will fail for the ACL, commant parameters not match.
+            // We want the wrong reply info ASAP
             if (check_stream_res != C_ERR) {
                 checkAndSetRockKeyNumber(c);
                 if (c->rockKeyNumber > 0) break;

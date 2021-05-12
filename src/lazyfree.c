@@ -179,8 +179,17 @@ int dbAsyncDelete(redisDb *db, robj *key) {
     /* Release the key-val pair, or just the key if we set the val
      * field to NULL in order to lazy free it later. */
     if (de) {
+        robj *val = dictGetVal(de);
+        if (val->type == OBJ_STRING) {
+            serverAssert(db->stat_key_str_cnt);
+            --db->stat_key_str_cnt;
+            if (val == shared.keyRockVal) {
+                serverAssert(db->stat_key_str_rockval_cnt);
+                --db->stat_key_str_rockval_cnt;
+            }
+        }
         dictFreeUnlinkedEntry(db->dict,de);
-        if (server.cluster_enabled) slotToKeyDel(key->ptr);
+        if (server.cluster_enabled) slotToKeyDel(key->ptr);        
         return 1;
     } else {
         return 0;

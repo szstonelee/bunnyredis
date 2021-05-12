@@ -2265,6 +2265,22 @@ static int updateMaxmemory(long long val, long long prev, const char **err) {
     return 1;
 }
 
+static int updateBunnymem(long long val, long long prev, const char **err) {
+    UNUSED(prev);
+    UNUSED(err);
+
+    if (val <= 10<<20) {
+        *err = "can not set Bunny memory to nagative value or too low (10 mega bytes as least)!";
+        return 0;
+    }
+
+    size_t used = zmalloc_used_memory();
+    if ((unsigned long long)val < used)
+        serverLog(LL_WARNING, "WARNING: the the new bunnymem set via config set (%llu) is smaller than the current memory usage (%zu).", val, used);
+
+    return 1;
+}
+
 static int updateGoodSlaves(long long val, long long prev, const char **err) {
     UNUSED(val);
     UNUSED(prev);
@@ -2469,7 +2485,7 @@ standardConfig configs[] = {
     createEnumConfig("syslog-facility", NULL, IMMUTABLE_CONFIG, syslog_facility_enum, server.syslog_facility, LOG_LOCAL0, NULL, NULL),
     createEnumConfig("repl-diskless-load", NULL, MODIFIABLE_CONFIG, repl_diskless_load_enum, server.repl_diskless_load, REPL_DISKLESS_LOAD_DISABLED, NULL, NULL),
     createEnumConfig("loglevel", NULL, MODIFIABLE_CONFIG, loglevel_enum, server.verbosity, LL_NOTICE, NULL, NULL),
-    createEnumConfig("maxmemory-policy", NULL, MODIFIABLE_CONFIG, maxmemory_policy_enum, server.maxmemory_policy, MAXMEMORY_NO_EVICTION, NULL, NULL),
+    createEnumConfig("maxmemory-policy", NULL, IMMUTABLE_CONFIG, maxmemory_policy_enum, server.maxmemory_policy, MAXMEMORY_NO_EVICTION, NULL, NULL),
     createEnumConfig("appendfsync", NULL, MODIFIABLE_CONFIG, aof_fsync_enum, server.aof_fsync, AOF_FSYNC_EVERYSEC, NULL, NULL),
     createEnumConfig("oom-score-adj", NULL, MODIFIABLE_CONFIG, oom_score_adj_enum, server.oom_score_adj, OOM_SCORE_ADJ_NO, NULL, updateOOMScoreAdj),
     createEnumConfig("acl-pubsub-default", NULL, MODIFIABLE_CONFIG, acl_pubsub_default_enum, server.acl_pubsub_default, USER_FLAG_ALLCHANNELS, NULL, NULL),
@@ -2529,7 +2545,8 @@ standardConfig configs[] = {
     createLongLongConfig("repl-backlog-size", NULL, MODIFIABLE_CONFIG, 1, LLONG_MAX, server.repl_backlog_size, 1024*1024, MEMORY_CONFIG, NULL, updateReplBacklogSize), /* Default: 1mb */
 
     /* Unsigned Long Long configs */
-    createULongLongConfig("maxmemory", NULL, MODIFIABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
+    createULongLongConfig("maxmemory", NULL, IMMUTABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
+    createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, 10<<20, ULLONG_MAX, server.bunnymem, 20<<20, MEMORY_CONFIG, NULL, updateBunnymem),
 
     /* Size_t configs */
     createSizeTConfig("hash-max-ziplist-entries", NULL, MODIFIABLE_CONFIG, 0, LONG_MAX, server.hash_max_ziplist_entries, 512, INTEGER_CONFIG, NULL, NULL),
