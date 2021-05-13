@@ -247,7 +247,6 @@ static void writeTasksToRocksdbInWriteThread(const int cnt, struct WriteTask **t
         sds key = tasks[i]->key;
         sds val = tasks[i]->val;
         rocksdb_writebatch_put(batch, key, sdslen(key), val, sdslen(val));
-        serverLog(LL_NOTICE, "write to Rocksdb, key = %s", key+1);
     }
     rocksdb_write(rockdb, writeoptions, batch, &err);
     if (err) {
