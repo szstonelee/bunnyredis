@@ -1348,8 +1348,8 @@ void freeClient(client *c) {
     // after the client was removed from server.clientIdTable first
     if (server.clientIdTable) {
         dictDelete(server.clientIdTable, (const void*)c->id);        // NOTE: may be not found and the return value is DICT_ERR
-        if (c == server.streamCurrentClient) {
-            // we need to switch concrete c to virtual client
+        if (c->id == server.streamCurrentClientId) {
+            // we need to switch concrete c to virtual client if c is current stream client
             setVirtualContextFromConcreteClient(c);
         }
     }
@@ -2050,9 +2050,10 @@ int processCommandAndResetClient(client *c) {
     /* performEvictions may flush slave output buffers. This may
      * result in a slave, that may be the active client, to be
      * freed. */
+    serverAssert(c->id != VIRTUAL_CLIENT_ID);       // processCommandAndResetClient() can only be called by concrete client
     c->streamWriting = STREAM_WRITE_INIT;    // after the command exectued in the current c, we need reset streamWriting
-    if (c == server.streamCurrentClient)
-        server.streamCurrentClient = NULL;   // if the concrete client is from stream write, we need to clear
+    if (c->id == server.streamCurrentClientId)
+        server.streamCurrentClientId = NO_STREAM_CLIENT_ID;   // if the concrete client is from stream write, we need to clear
     return deadclient ? C_ERR : C_OK;
 }
 
@@ -2145,14 +2146,16 @@ void processInputBuffer(client *c) {
             }
 
             // NOTE: for test of injecting lots of keys, you can commout out the following code and then enbale it again
-            /*
             if (checkMemInProcessBuffer(c) != C_OK) {
-                rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
-                   c->argv[0]->ptr);
-                commandProcessed(c);
-                continue;
+                serverLog(LL_WARNING, "memory is low!!!");
+                int res = performKeyOfStringEvictions();    // try to free memory
+                if (res != C_OK) {
+                    rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
+                       c->argv[0]->ptr);
+                    commandProcessed(c);
+                    continue;
+                }
             }
-            */
 
             // check and set streamWriting
             int check_stream_res = checkAndSetStreamWriting(c);
@@ -2164,7 +2167,8 @@ void processInputBuffer(client *c) {
             //    or it will fail for the ACL, commant parameters not match.
             // We want the wrong reply info ASAP
             if (check_stream_res != C_ERR) {
-                checkAndSetRockKeyNumber(c);
+                int is_stream_write = (c->id == server.streamCurrentClientId);
+                checkAndSetRockKeyNumber(c, is_stream_write);
                 if (c->rockKeyNumber > 0) break;
             }
 

@@ -1645,8 +1645,11 @@ struct redisServer {
     int target_replica_port; /* Failover target port */
     int failover_state; /* Failover state */
 
-    int stream_pipe_read;   /* Stream write consumer signal */
+    int stream_pipe_read;   /* Stream read consumer signal */
     int stream_pipe_write;  /* Stream write consumer signal */
+
+    int rock_pipe_read;   /* Stream read rock-read signal */
+    int rock_pipe_write;  /* Stream write rock-read signal */
 
     client *virtual_client;   /* The "fake client" to query Redis from stream writer */
 
@@ -1654,10 +1657,15 @@ struct redisServer {
 
     dict *clientIdTable;    /* client id to client* hash table */
 
-    client* streamCurrentClient;    /* right now stream client. NOTE: maybe virtual client */
+    // client* streamCurrentClient;    /* right now stream client. NOTE: maybe virtual client */
+    uint64_t    streamCurrentClientId;  /* right now stream client id. NOTE: may be virtual client ID */
 
     unsigned long long bunnymem;   /* Max number of memory bytes to use, at most is the size of all keys */
 };
+
+client* lookupStreamCurrentClient();
+uint64_t dictUint64Hash(const void *key);
+
 
 #define MAX_KEYS_BUFFER 256
 
@@ -1673,9 +1681,11 @@ typedef struct {
 #define GETKEYS_RESULT_INIT { {0}, NULL, 0, MAX_KEYS_BUFFER }
 
 typedef void redisCommandProc(client *c);
+typedef list* redisCommandGetRockKeyProc(client *c);
 typedef int redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, getKeysResult *result);
 struct redisCommand {
     char *name;
+    redisCommandGetRockKeyProc *rock_proc;
     int streamCmdCategory;  /* NOTE: pos must be 2, STREAM_FORBIDDEN_CMD(-1), STREAM_NO_NEED_CMD(0), STREAM_ENABLED_CMD(1) */
     redisCommandProc *proc;
     int arity;

@@ -1,6 +1,7 @@
 #include "server.h"
 #include "dict.h"
 #include "rockevict.h"
+#include "rock.h"
 
 #define EVPOOL_SIZE 16
 #define EVPOOL_CACHED_SDS_SIZE 255
@@ -32,7 +33,7 @@ static void _dictRehashStep(dict *d) {
     if (d->pauserehash == 0) dictRehash(d,1);
 }
 
-unsigned int dictGetSomeKeysOfStringType(dict *d, dictEntry **des, unsigned int count) {
+static unsigned int dictGetSomeKeysOfStringType(dict *d, dictEntry **des, unsigned int count) {
     unsigned long j; /* internal hash table id, 0 or 1. */
     unsigned long tables; /* 1 or 2 tables? */
     unsigned long stored = 0, maxsizemask;
@@ -107,11 +108,11 @@ unsigned int dictGetSomeKeysOfStringType(dict *d, dictEntry **des, unsigned int 
 }
 
 /* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
-void evictKeyPoolPopulate(int dbid, dict *sampledict, struct evictKeyPoolEntry *pool) {
+static void evictKeyPoolPopulate(int dbid, dict *sampledict, struct evictKeyPoolEntry *pool) {
     int j, k, count;
     dictEntry *samples[server.maxmemory_samples];
 
-    count = dictGetSomeKeys(sampledict,samples,server.maxmemory_samples);
+    count = dictGetSomeKeysOfStringType(sampledict,samples,server.maxmemory_samples);
 
     for (j = 0; j < count; j++) {
         unsigned long long idle;
@@ -280,12 +281,13 @@ int performKeyOfStringEvictions(void) {
             if (bestkey == NULL) ++fail_cnt;
         }
 
-        /* Finally remove value of the selected key. */
+        /* Finally convert value of the selected key and write it to RocksDB write queue */
         if (bestkey) {
             db = server.db+bestdbid;
             delta = (long long) zmalloc_used_memory();
             dictSetVal(dict, de, shared.keyRockVal);
             ++db->stat_key_str_rockval_cnt;
+            addRockWriteTaskOfString(bestdbid, bestkey, valstrobj->ptr);
             decrRefCount(valstrobj);
             delta -= (long long) zmalloc_used_memory();
             mem_freed += delta;

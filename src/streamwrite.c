@@ -6,6 +6,7 @@
 #include "networking.h"
 #include "endianconv.h"
 #include "rock.h"
+#include "streamwrite.h"
 
 // spin lock only run in Linux
 static pthread_spinlock_t consumerLock;     
@@ -226,18 +227,17 @@ int checkAndSetStreamWriting(client *c) {
 /* set virtual client context for command, dbid ars so it can call execVritualCommand() directly later */
 /* args is not like c->args, it exclude the first command name and it is based on sds string not robj* */
 static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
+    // setVirtualClinetContext() is not reentry if not called freeVirtualClientContext() before (or init)
+    serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);        
+
     client *c = server.virtual_client;
 
     int select_res = selectDb(c, dbid);
     serverAssert(select_res == C_OK);
 
     int argc = (int)(1 + listLength(args));
-    serverAssert(c->argc == 0);
     c->argc = argc;
-
-    serverAssert(c->argv == NULL);
     c->argv = zmalloc(sizeof(robj*)*argc);
-
     c->argv[0] = createStringObject(command, sdslen(command));
 
     listIter li;
@@ -261,10 +261,18 @@ static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
     serverAssert(acl_retval == ACL_OK);
 }
 
-/* when concreate client is destroyed, we need to transfer its context to virtual context */ 
+/* when concreate client is destroyed and we find that the client is the current stream client, 
+ * we need to transfer its context to virtual context.
+ * Check network.c freeClient() for more details 
+ * For stream phase, it is not necessary because all info can be constructed from stream message 
+ * But for roch phase, it is essential because rock phasse with steam command execution
+ * need an exection context which transfer from concrete client to virtual context */
 void setVirtualContextFromConcreteClient(client *concrete) {
     serverAssert(concrete != server.virtual_client);
-    serverAssert(server.streamCurrentClient == concrete);
+    serverAssert(lookupStreamCurrentClient() == concrete);
+    serverAssert(server.virtual_client->argv == NULL);
+    serverAssert(concrete->argc > 0);
+    serverAssert(concrete->streamWriting == STREAM_WRITE_WAITING || concrete->streamWriting == STREAM_WRITE_FINISH);
 
     serverAssert(concrete->db->id >= 0 && concrete->db->id < server.dbnum);
     uint8_t dbid = (uint8_t)concrete->db->id;
@@ -277,7 +285,9 @@ void setVirtualContextFromConcreteClient(client *concrete) {
     }
 
     setVirtualClinetContext(dbid, command, args);
-    server.streamCurrentClient = server.virtual_client;     // switch to virtual client
+    // NOTE: We can not switch to virtual client, we need server.streamCurrentClientId as before
+    // because rock phase will need it to perform the stream write for the broken client
+    // server.streamCurrentClientId = VIRTUAL_CLIENT_ID;                   
     server.virtual_client->rockKeyNumber = concrete->rockKeyNumber;     // do not forget to set the rockyNumber
 
     // clean up
@@ -300,10 +310,11 @@ static void freeVirtualClientContext() {
         robj* obj = c->argv[j];
         decrRefCount(obj);
     }
-
     zfree(c->argv);
     c->argc = 0;
     c->argv = NULL;
+
+    c->cmd = c->lastcmd = NULL;
 }
 
 // reference scripting.c luaRedisGenericCommand
@@ -311,14 +322,15 @@ static void freeVirtualClientContext() {
 // from networking.c processInlineBuffer(), I guess all arguments are string object
 void execVirtualCommand() {
     /* Run the command */
+    serverAssert(lookupStreamCurrentClient() == server.virtual_client);
+    serverAssert(server.virtual_client->rockKeyNumber == 0);
     int call_flags = CMD_CALL_SLOWLOG | CMD_CALL_STATS;
     call(server.virtual_client, call_flags);
-    serverAssert((server.virtual_client->flags & CLIENT_BLOCKED) == 0);
+    serverAssert((server.virtual_client->flags & CLIENT_BLOCKED) == 0);     // can not block virtual client
 
     // clean up
-    serverAssert(server.streamCurrentClient == server.virtual_client);
-    server.streamCurrentClient = NULL;
-    freeVirtualClientContext();
+    server.streamCurrentClientId = NO_STREAM_CLIENT_ID;     // for the next stream client
+    freeVirtualClientContext();     // the matched clearing-up for setVirtualClientContext()
 }
 
 /*                                 */
@@ -433,7 +445,7 @@ void checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
 }
 
 /* this is the producer thread entrance. Here we init kafka prodcer environment 
-*  and then start a forever loop for send messages and dealt with error */
+*  and then start a forever loop for send messages and deal with error */
 static void* entryInProducerThread(void *arg) {
     UNUSED(arg);
 
@@ -537,20 +549,18 @@ void initKafkaProducer() {
 /*                                 */
 /*                                 */
 
-/* main thread will deal each commmand with a streamWrite message here */
+/* main thread will deal each commmand with a streamWrite message here 
+ * all parameters are parsed from the strem write message */
 static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
                                             sds command, list *args) {
-
-    serverAssert(server.streamCurrentClient == NULL);
+    serverAssert(server.streamCurrentClientId == NO_STREAM_CLIENT_ID);
 
     client *c = server.virtual_client;
-
     if (node_id == server.node_id) {
         dictEntry *de = dictFind(server.clientIdTable, (const void*)client_id);
-        if (de) c = (client*)de->v.val;     // found concreate client
+        if (de) c = dictGetVal(de);     // found the concrete client
     }
-
-    server.streamCurrentClient = c;
+    server.streamCurrentClientId = c->id;   // NOTE: could be concrete client id or vritual client id
 
     if (c != server.virtual_client) {
         serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
@@ -558,14 +568,15 @@ static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id,
         serverAssert((size_t)c->argc == 1 + listLength(args));
 
         c->streamWriting = STREAM_WRITE_FINISH;
-        checkAndSetRockKeyNumber(c);
+        int is_stream_write = (c->id == server.streamCurrentClientId);
+        checkAndSetRockKeyNumber(c, is_stream_write);        // after the stream phase, we can goon to rock phase
         if (c->rockKeyNumber == 0)
             // resume the excecution of concrete client and clear server.streamCurrentClient
             processCommandAndResetClient(c);        
 
     } else {
         setVirtualClinetContext(dbid, command, args);
-        checkAndSetRockKeyNumber(c);
+        checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase 
         if (c->rockKeyNumber == 0)
             // resume the execution of virtual client and clear server.streamCurrentClient
             execVirtualCommand();       
@@ -593,10 +604,10 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
     size_t n = read(server.stream_pipe_read, tmpUseBuf, 1);     
     serverAssert(n == 1);
 
-    if (server.streamCurrentClient && server.streamCurrentClient->rockKeyNumber > 0)
+    if (lookupStreamCurrentClient() && lookupStreamCurrentClient()->rockKeyNumber > 0)
         return;     // current stream client has not finshed for rock key
 
-    serverAssert(server.streamCurrentClient == NULL);
+    serverAssert(lookupStreamCurrentClient() == NULL);
 
     lockConsumerData();
 
@@ -763,7 +774,7 @@ void initStreamPipeAndStartConsumer() {
 
     if (aeCreateFileEvent(server.el, server.stream_pipe_read, 
         AE_READABLE, streamConsumerSignalHandler,NULL) == AE_ERR) {
-        serverPanic("Unrecoverable error creating server.rock_pipe file event.");
+        serverPanic("Unrecoverable error creating server.stream_pipe file event.");
     }
 
     if (pthread_create(&consumer_thread, NULL, entryInConsumerThread, NULL) != 0) {

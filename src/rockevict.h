@@ -3,5 +3,6 @@
 
 int checkMemInProcessBuffer(client *c);
 void debugEvictCommand(client *c);
+int performKeyOfStringEvictions();
 
 #endif
