@@ -153,7 +153,9 @@ int dbAsyncDelete(redisDb *db, robj *key) {
      * is actually just slower... So under a certain limit we just free
      * the object synchronously. */
     dictEntry *de = dictUnlink(db->dict,key->ptr);
+    dictEntry *lru_de = dictUnlink(db->key_lrus, key->ptr);
     if (de) {
+        serverAssert(lru_de);
         robj *val = dictGetVal(de);
 
         /* Tells the module that the key has been unlinked from the database. */
@@ -189,6 +191,7 @@ int dbAsyncDelete(redisDb *db, robj *key) {
             }
         }
         dictFreeUnlinkedEntry(db->dict,de);
+        dictFreeUnlinkedEntry(db->key_lrus, lru_de);
         if (server.cluster_enabled) slotToKeyDel(key->ptr);        
         return 1;
     } else {

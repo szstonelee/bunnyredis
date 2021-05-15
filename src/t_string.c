@@ -300,6 +300,19 @@ void getCommand(client *c) {
     getGenericCommand(c);
 }
 
+list* getCmdForRock(client *c) {
+    robj *key = c->argv[1];
+    robj *val = lookupKeyRead(c->db, key);
+
+    // right now key with string type can have value of keyRockVal, so we do not need to checkType()
+    if (val != shared.keyRockVal) return NULL;        
+
+    list *rock_keys = listCreate();
+    sds copy = sdsdup(key->ptr);
+    listAddNodeTail(rock_keys, copy);
+    return rock_keys;
+}
+
 /*
  * GETEX <key> [PERSIST][EX seconds][PX milliseconds][EXAT seconds-timestamp][PXAT milliseconds-timestamp]
  *

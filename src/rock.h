@@ -12,5 +12,8 @@ void initRockWrite();
 void initRockPipeAndRockRead();
 void closeRockdb();
 const char* getRockdbPath();
+void debugRockCommand(client *c);
+
+list* getCmdForRock();
 
 #endif

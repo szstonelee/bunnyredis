@@ -449,9 +449,6 @@ void checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
 static void* entryInProducerThread(void *arg) {
     UNUSED(arg);
 
-    sndMsgs = listCreate();
-    uint sleepMicro = START_SLEEP_MICRO;      
-
     rd_kafka_t *rk;
     rd_kafka_topic_t *rkt; 
     rd_kafka_conf_t *conf;
@@ -490,6 +487,8 @@ static void* entryInProducerThread(void *arg) {
 
     checkKafkaInProduerThread(rk, rkt); // for waiting mainthread
 
+    sndMsgs = listCreate();
+    uint sleepMicro = START_SLEEP_MICRO;      
     while(1) {
         sds msg = pickSndMsgInProducerThread();
         if (msg) {

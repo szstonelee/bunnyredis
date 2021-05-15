@@ -72,6 +72,9 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
                 updateLFU(val);
             } else {
                 val->lru = LRU_CLOCK();
+                dictEntry *lru_de = dictFind(db->key_lrus,key->ptr);
+                serverAssert(lru_de);
+                lru_de->v.u64 = val->lru;
             }
         }
         return val;
@@ -192,6 +195,7 @@ robj *lookupKeyWriteOrReply(client *c, robj *key, robj *reply) {
 void dbAdd(redisDb *db, robj *key, robj *val) {
     sds copy = sdsdup(key->ptr);
     int retval = dictAdd(db->dict, copy, val);
+    dictAdd(db->key_lrus, copy, 0);     // lru for new key is zero
 
     serverAssertWithInfo(NULL,key,retval == DICT_OK);
     signalKeyAsReady(db, key, val->type);
@@ -214,6 +218,7 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
 int dbAddRDBLoad(redisDb *db, sds key, robj *val) {
     int retval = dictAdd(db->dict, key, val);
     if (retval != DICT_OK) return 0;
+    dictAdd(db->key_lrus, key, 0);
     if (server.cluster_enabled) slotToKeyAdd(key);
     return 1;
 }
@@ -231,8 +236,10 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     robj *old = dictGetVal(de);
     if (old->type == OBJ_STRING) {
         serverAssert(db->stat_key_str_cnt);
-        --db->stat_key_str_cnt;
+        // --db->stat_key_str_cnt;
         if (old == shared.keyRockVal) {
+            // we can not overwirte the old value which is keyRockVal with keyRockVal
+            serverAssert(val != shared.keyRockVal);      
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
         }
@@ -326,7 +333,9 @@ int dbSyncDelete(redisDb *db, robj *key) {
      * the key, because it is shared with the main dictionary. */
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
     dictEntry *de = dictUnlink(db->dict,key->ptr);
+    dictEntry *lru_de = dictUnlink(db->key_lrus, key->ptr);
     if (de) {
+        serverAssert(lru_de);
         robj *val = dictGetVal(de);
         if (val->type == OBJ_STRING) {
             serverAssert(db->stat_key_str_cnt);
@@ -339,6 +348,7 @@ int dbSyncDelete(redisDb *db, robj *key) {
         /* Tells the module that the key has been unlinked from the database. */
         moduleNotifyKeyUnlink(key,val);
         dictFreeUnlinkedEntry(db->dict,de);
+        dictFreeUnlinkedEntry(db->key_lrus, lru_de);
         if (server.cluster_enabled) slotToKeyDel(key->ptr);
         return 1;
     } else {
@@ -489,6 +499,7 @@ dbBackup *backupDb(void) {
     for (int i=0; i<server.dbnum; i++) {
         backup->dbarray[i] = server.db[i];
         server.db[i].dict = dictCreate(&dbDictType,NULL);
+        server.db[i].key_lrus = dictCreate(&keyLruType,NULL);
         server.db[i].expires = dictCreate(&dbExpiresDictType,NULL);
     }
 
@@ -518,6 +529,7 @@ void discardDbBackup(dbBackup *buckup, int flags, void(callback)(void*)) {
     emptyDbStructure(buckup->dbarray, -1, async, callback);
     for (int i=0; i<server.dbnum; i++) {
         dictRelease(buckup->dbarray[i].dict);
+        dictRelease(buckup->dbarray[i].key_lrus);
         dictRelease(buckup->dbarray[i].expires);
     }
 
@@ -543,6 +555,7 @@ void restoreDbBackup(dbBackup *buckup) {
         serverAssert(dictSize(server.db[i].dict) == 0);
         serverAssert(dictSize(server.db[i].expires) == 0);
         dictRelease(server.db[i].dict);
+        dictRelease(server.db[i].key_lrus);
         dictRelease(server.db[i].expires);
         server.db[i] = buckup->dbarray[i];
     }
@@ -1352,11 +1365,13 @@ int dbSwapDatabases(int id1, int id2) {
      * ready_keys and watched_keys, since we want clients to
      * remain in the same DB they were. */
     db1->dict = db2->dict;
+    db1->key_lrus = db2->key_lrus;
     db1->expires = db2->expires;
     db1->avg_ttl = db2->avg_ttl;
     db1->expires_cursor = db2->expires_cursor;
 
     db2->dict = aux.dict;
+    db2->key_lrus = aux.key_lrus;
     db2->expires = aux.expires;
     db2->avg_ttl = aux.avg_ttl;
     db2->expires_cursor = aux.expires_cursor;

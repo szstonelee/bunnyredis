@@ -222,7 +222,7 @@ struct redisCommand redisCommandTable[] = {
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
 
-    {"get",NULL,0,getCommand,2,
+    {"get",getCmdForRock,0,getCommand,2,
      "read-only fast @string",
      0,NULL,1,1,1,0,0,0},
 
@@ -1133,6 +1133,10 @@ struct redisCommand redisCommandTable[] = {
 
     {"debugevict",NULL,0,debugEvictCommand,-1,
      "read-only fast @connection",
+     0,NULL,0,0,0,0,0,0},
+
+    {"debugrock",NULL,0,debugRockCommand,3,
+     "read-only fast @connection",
      0,NULL,0,0,0,0,0,0}
 };
 
@@ -1462,6 +1466,16 @@ dictType dbDictType = {
     dictSdsKeyCompare,          /* key compare */
     dictSdsDestructor,          /* key destructor */
     dictObjectDestructor,       /* val destructor */
+    dictExpandAllowed           /* allow to expand */
+};
+
+dictType keyLruType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    NULL,                       /* key destructor */
+    NULL,                       /* val destructor */
     dictExpandAllowed           /* allow to expand */
 };
 
@@ -3298,6 +3312,7 @@ void initServer(void) {
     /* Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType,NULL);
+        server.db[j].key_lrus = dictCreate(&keyLruType,NULL);
         server.db[j].expires = dictCreate(&dbExpiresDictType,NULL);
         server.db[j].expires_cursor = 0;
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);

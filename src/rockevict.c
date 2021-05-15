@@ -33,7 +33,7 @@ static void _dictRehashStep(dict *d) {
     if (d->pauserehash == 0) dictRehash(d,1);
 }
 
-static unsigned int dictGetSomeKeysOfStringType(dict *d, dictEntry **des, unsigned int count) {
+static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru, dictEntry **des, dictEntry **lru_des, unsigned int count) {
     unsigned long j; /* internal hash table id, 0 or 1. */
     unsigned long tables; /* 1 or 2 tables? */
     unsigned long stored = 0, maxsizemask;
@@ -46,6 +46,12 @@ static unsigned int dictGetSomeKeysOfStringType(dict *d, dictEntry **des, unsign
     for (j = 0; j < count; j++) {
         if (dictIsRehashing(d))
             _dictRehashStep(d);
+        else
+            break;
+    }
+    for (j = 0; j < count; j++) {
+        if (dictIsRehashing(lru))
+            _dictRehashStep(lru);
         else
             break;
     }
@@ -86,14 +92,20 @@ static unsigned int dictGetSomeKeysOfStringType(dict *d, dictEntry **des, unsign
                 }
             } else {
                 emptylen = 0;
+                dictEntry *lru_he;
                 while (he) {
+                    sds key = dictGetKey(he);
+                    lru_he = dictFind(lru, key);
+                    serverAssert(lru_he);
                     /* Collect all the elements of the buckets found non
                      * empty while iterating. */
                     robj *o = he->v.val;
                     serverAssert(o);
                     if (o->type == OBJ_STRING && o->refcount != OBJ_SHARED_REFCOUNT) {
                         *des = he;
+                        *lru_des = lru_he;
                         des++;
+                        lru_des++;
                         stored++;
                     }
 
@@ -108,23 +120,27 @@ static unsigned int dictGetSomeKeysOfStringType(dict *d, dictEntry **des, unsign
 }
 
 /* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
-static void evictKeyPoolPopulate(int dbid, dict *sampledict, struct evictKeyPoolEntry *pool) {
+static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, struct evictKeyPoolEntry *pool) {
     int j, k, count;
     dictEntry *samples[server.maxmemory_samples];
+    dictEntry *lru_samples[server.maxmemory_samples];
 
-    count = dictGetSomeKeysOfStringType(sampledict,samples,server.maxmemory_samples);
+    count = dictGetSomeKeysOfStringType(sampledict, lru_dict, samples, lru_samples, server.maxmemory_samples);
 
     for (j = 0; j < count; j++) {
         unsigned long long idle;
         sds key;
-        robj *o;
+        // robj *o;
         dictEntry *de;
+        dictEntry *lru_de;
 
         de = samples[j];
+        lru_de = lru_samples[j];
         key = dictGetKey(de);
 
-        o = dictGetVal(de);
-        idle = estimateObjectIdleTime(o);
+        // o = dictGetVal(de);
+        // idle = estimateObjectIdleTime(o);
+        idle = dictGetUnsignedIntegerVal(lru_de);
 
         /* Insert the element inside the pool.
          * First, find the first empty bucket or the first populated
@@ -224,6 +240,7 @@ int performKeyOfStringEvictions(void) {
         robj *valstrobj;
         int bestdbid;
         redisDb *db;
+        dict *lru_dict;
         dict *dict;
         dictEntry *de;
 
@@ -239,8 +256,10 @@ int performKeyOfStringEvictions(void) {
             for (i = 0; i < server.dbnum; i++) {
                 db = server.db+i;
                 dict = db->dict;
+                lru_dict = db->key_lrus;
+
                 if ((keys = dictSize(dict)) != 0) {
-                    evictKeyPoolPopulate(i, dict, pool);
+                    evictKeyPoolPopulate(i, dict, lru_dict, pool);
                     total_keys += keys;
                 }
             }
