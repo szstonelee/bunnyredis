@@ -16,4 +16,7 @@ void debugRockCommand(client *c);
 
 list* getCmdForRock();
 
+sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key);
+sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field);
+
 #endif

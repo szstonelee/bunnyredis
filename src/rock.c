@@ -24,12 +24,12 @@ rocksdb_t *rockdb;
 const char bunny_rockdb_path[] = "/tmp/bunnyrocksdb";
 
 struct WriteTask {
-    int type;
-    sds key;
+    // uint8_t type;
+    sds rock_key;
     sds val;
 };
 
-list* write_queue;
+list* write_queue;      // list of *WriteTask
 
 void valAsListDestructor(void *privdata, void *obj) {
     UNUSED(privdata);
@@ -67,16 +67,16 @@ dictType streamWaitKeyDictType = {
 
 // stream_wait_keys is a set. Set key is sds key which stream write is waiting for. 
 // And the sds key share the same object in read_candidates. So does not need to be freed
-dict *stream_wait_keys;     
+dict *stream_wait_rock_keys;     
 // read_candidates is a dictionary. Dict key is sds key as reading task. 
 // Dict val is a list of client id waiting for the key. 
 // NOTE: the list could have duplicated client id. 
 //       e.g., multi -> exec could leed to duplicated rock key with the same client.
-dict *read_candidates;
+dict *read_rock_key_candidates;
 
 #define MAX_READ_TASK_NUM   16
 size_t on_fly_task_cnt;        // how may task for the read thraed to do
-sds on_fly_keys[MAX_READ_TASK_NUM];
+sds on_fly_rock_keys[MAX_READ_TASK_NUM];
 sds on_fly_vals[MAX_READ_TASK_NUM];        // if first element is NULL, it means no return values
 sds val_not_found;
 
@@ -114,18 +114,16 @@ static void debugPrintRockKeys(list *rock_keys) {
 
 void debugRockCommand(client *c) {
     sds flag = c->argv[1]->ptr;
-    // uint8_t dbid = c->db->id;
 
     if (strcasecmp(flag, "set") == 0) {
         robj *key = c->argv[2];
-        serverLog(LL_WARNING, "key = %s", (sds)key->ptr);
-        robj *val = lookupKeyRead(c->db, key);
-
-        if (!val) {
+        dictEntry *de = dictFind(c->db->dict, key->ptr);
+        if (!de) {
             addReplyError(c, "can not find the key to set rock value");
             return;            
         }
-
+        robj *val = dictGetVal(de);
+        serverAssert(val);
         if (val->type != OBJ_STRING) {
             addReplyError(c, "key found, but type is not OBJ_STRING");
             return;
@@ -135,9 +133,10 @@ void debugRockCommand(client *c) {
             return;
         }
         
+        dictSetVal(c->db->dict, de, shared.keyRockVal);
         ++c->db->stat_key_str_rockval_cnt;
-        // addRockWriteTaskOfString(dbid, key->ptr, old_str);
-        // sdsfree(old_str);
+        addRockWriteTaskOfString(c->db->id, key->ptr, val->ptr);
+        decrRefCount(val);
     } else {
         addReplyError(c, "wrong flag for debugrock!");
         return;
@@ -149,13 +148,13 @@ void debugRockCommand(client *c) {
 /* When command be executed, it will chck the arguments for all the keys which value is in RocksDB.
  * If value in RocksDB, it will set rockKeyNumber > 0 and add a task for another thread to read from RocksDB
  * Task will be done in async mode 
- * NOTE: the client c could by virtual client 
- * If the caller is for stream write, is_write_stream != 0 and we add task to both read_candidates and stream_wait_keys */
+ * NOTE1: the client c could by virtual client 
+ * If the caller is for stream write, is_write_stream != 0 and we add task to both read_candidates and stream_wait_keys
+ * NOTE2: actually checkAndSetRockKeyNumber() is belonged to read catagory, 
+ *       so check the following read catagory after write catagory for more details */
 void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
-    return;
-    
     // Because stream write is seriable
-    if (is_stream_write) serverAssert(dictSize(stream_wait_keys) == 0);
+    if (is_stream_write) serverAssert(dictSize(stream_wait_rock_keys) == 0);
 
 	serverAssert(c);
 	serverAssert(c->streamWriting != STREAM_WRITE_WAITING);
@@ -168,7 +167,9 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
 
     list *rock_keys = cmd->rock_proc(c);
     if (!rock_keys) return;
-    
+
+    // cmd->rock_proc() has allocated memory resouce for the list of rock_keys 
+    // and the sds keys in the list
     c->rockKeyNumber = listLength(rock_keys);
     serverAssert(c->rockKeyNumber > 0);
 
@@ -179,24 +180,25 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
     listNode *ln;
     listRewind(rock_keys, &li);
     while ((ln = listNext(&li))) {
-        sds key = listNodeValue(ln);
-        dictEntry *de = dictFind(read_candidates, key);
+        sds rock_key = listNodeValue(ln);
+        dictEntry *de = dictFind(read_rock_key_candidates, rock_key);
         if (!de) {
             list *new_clientids = listCreate();
             listAddNodeTail(new_clientids, (void *)client_id);
-            dictAdd(read_candidates, key, new_clientids);
+            dictAdd(read_rock_key_candidates, rock_key, new_clientids);
         } else {
-            list *save_clientids = dictGetVal(de);
-            listAddNodeTail(save_clientids, (void *)client_id);
+            list *saved_clientids = dictGetVal(de);
+            listAddNodeTail(saved_clientids, (void *)client_id);
         }
         if (is_stream_write)
             // NOTE: maybe add the same key serveral times
-            dictAdd(stream_wait_keys, key, NULL);       
+            dictAdd(stream_wait_rock_keys, rock_key, NULL);       
     }
 
     unlockRockRead();
 
-    // clear list but not the keys. NOTE: keys are owned by read_candidates
+    // clear list but not the keys in the list.
+    // NOTE: rock keys are owned now by read_rock_key_candidates
     listRelease(rock_keys);
 }
 
@@ -204,6 +206,7 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
  * if no keys in rocksdb, then resume the command
  * otherwise, client go on sleep for rocks */
 void checkThenResumeRockClient(client *c) {
+    // TODO: vritual client
     serverAssert(c->rockKeyNumber == 0);
     int is_stream_write = (c->id == server.streamCurrentClientId);
     checkAndSetRockKeyNumber(c, is_stream_write);
@@ -211,6 +214,41 @@ void checkThenResumeRockClient(client *c) {
     	int res = processCommandAndResetClient(c);
 	    serverLog(LL_WARNING, "resumeRockClient res = %d", res);
     }
+}
+
+sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key) {
+    sds rock_key;
+
+    uint8_t type = ROCK_STRING_TYPE;
+    rock_key = sdsnewlen(&type, 1);
+    rock_key = sdscatlen(rock_key, &dbid, 1);
+    rock_key = sdscatlen(rock_key, string_key, sdslen(string_key));
+
+    return rock_key;
+}
+
+sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field) {
+    sds rock_key;
+
+    uint8_t type = ROCK_HASH_TYPE;
+    rock_key = sdsnewlen(&type, 1);
+    rock_key = sdscatlen(rock_key, &dbid, 1);
+    uint32_t key_len = intrev32ifbe(sdslen(key));
+    rock_key = sdscatlen(rock_key, &key_len, sizeof(key_len));
+    rock_key = sdscatlen(rock_key, key, sdslen(key));
+    rock_key = sdscatlen(rock_key, field, sdslen(field));
+
+    return rock_key;
+}
+
+static void decode_rock_key(sds const rock_key, uint8_t *type, uint8_t *dbid, char **key, size_t *key_sz) {
+    serverAssert(sdslen(rock_key) >= 2);
+    *type = rock_key[0];
+    serverAssert(*type == ROCK_STRING_TYPE || *type == ROCK_HASH_TYPE);
+    *dbid = rock_key[1];
+    serverAssert(*dbid < server.dbnum);
+    *key = rock_key+2;
+    *key_sz = sdslen(rock_key) - 2;
 }
 
 /*                                 */
@@ -222,17 +260,16 @@ void checkThenResumeRockClient(client *c) {
 /* this is the write thread entrance. Here we init rocksdb environment 
 *  and then start a forever loop to write value to Rocksdb and deal with error */
 
-void addRockWriteTaskOfString(uint8_t dbid, sds key, sds val) {
-    sds rock_key, rock_val;
+void addRockWriteTaskOfString(const uint8_t dbid, sds const key, sds const val) {
+    sds rock_key, copy_val;
     struct WriteTask *task = zmalloc(sizeof(struct WriteTask));
 
-    rock_key = sdsnewlen(&dbid, 1);
-    rock_key = sdscatlen(rock_key, key, sdslen(key));
-    rock_val = sdsdup(val);
+    rock_key = encode_rock_key_for_string(dbid, key);
+    copy_val = sdsdup(val);
 
-    task->type = ROCK_STRING_TYPE;
-    task->key = rock_key;
-    task->val = rock_val;
+    // task->type = ROCK_STRING_TYPE;
+    task->rock_key = rock_key;
+    task->val = copy_val;
 
     lockRockWrite();
     listAddNodeTail(write_queue, task);
@@ -241,20 +278,16 @@ void addRockWriteTaskOfString(uint8_t dbid, sds key, sds val) {
     unlockRockWrite();
 }
 
-void addRockWriteTaskOfHash(uint8_t dbid, sds key, sds field, sds val) {
-    sds rock_key, rock_val;
+void addRockWriteTaskOfHash(const uint8_t dbid, sds const key, sds const field, sds const val) {
+    sds rock_key, copy_val;
     struct WriteTask *task = zmalloc(sizeof(struct WriteTask));
 
-    rock_key = sdsnewlen(&dbid, 1);
-    uint32_t key_len = intrev32ifbe(sdslen(key));
-    rock_key = sdscatlen(rock_key, &key_len, sizeof(key_len));
-    rock_key = sdscatlen(rock_key, key, sdslen(key));
-    rock_key = sdscatlen(rock_key, field, sdslen(field));
-    rock_val = sdsdup(val);
+    rock_key = encode_rock_key_for_hash(dbid, key, field);
+    copy_val = sdsdup(val);
 
-    task->type = ROCK_HASH_TYPE;
-    task->key = rock_key;
-    task->val = rock_val;
+    // task->type = ROCK_HASH_TYPE;
+    task->rock_key = rock_key;
+    task->val = copy_val;
 
     lockRockWrite();
     listAddNodeTail(write_queue, task);
@@ -266,10 +299,10 @@ void addRockWriteTaskOfHash(uint8_t dbid, sds key, sds field, sds val) {
 /* We remove before_pick_cnt task which is regards as consumed in write_queue 
  * Then we pick some task up to the limit of ROCK_WRITE_PICK_MAX_LEN
  * and return the pick number  */   
-static int pickWriteTasksInWriteThread(struct WriteTask **tasks, const int before_pick_cnt) {
-    serverAssert(before_pick_cnt >= 0 && before_pick_cnt <= ROCK_WRITE_PICK_MAX_LEN);
+static size_t pickWriteTasksInWriteThread(struct WriteTask **tasks, const size_t before_pick_cnt) {
+    serverAssert(before_pick_cnt <= ROCK_WRITE_PICK_MAX_LEN);
 
-    int cnt = 0;
+    size_t cnt = 0;
     listIter li;
     listNode *ln;
     struct WriteTask* to_free_tasks[ROCK_WRITE_PICK_MAX_LEN];
@@ -278,9 +311,9 @@ static int pickWriteTasksInWriteThread(struct WriteTask **tasks, const int befor
 
     // first remove the consumed elements in write_queue
     if (before_pick_cnt) {
-        serverAssert((int)listLength(write_queue) >= before_pick_cnt);
+        serverAssert(listLength(write_queue) >= before_pick_cnt);
         listRewind(write_queue, &li);
-        for (int i = 0; i < before_pick_cnt; ++i) {
+        for (size_t i = 0; i < before_pick_cnt; ++i) {
             ln = listNext(&li);
             struct WriteTask *task = listNodeValue(ln);
             to_free_tasks[i] = task;
@@ -297,9 +330,9 @@ static int pickWriteTasksInWriteThread(struct WriteTask **tasks, const int befor
     unlockRockWrite();
 
     // release resource out of lock for performance reason
-    for (int i = 0; i < before_pick_cnt; ++i) {
+    for (size_t i = 0; i < before_pick_cnt; ++i) {
         struct WriteTask *to_free = to_free_tasks[i];
-        sdsfree(to_free->key);
+        sdsfree(to_free->rock_key);
         sdsfree(to_free->val);
         zfree(to_free);
     }
@@ -307,16 +340,16 @@ static int pickWriteTasksInWriteThread(struct WriteTask **tasks, const int befor
     return cnt;
 }
 
-static void writeTasksToRocksdbInWriteThread(const int cnt, struct WriteTask **tasks) {
-    rocksdb_writebatch_t* batch = rocksdb_writebatch_create();
+static void writeTasksToRocksdbInWriteThread(const size_t cnt, struct WriteTask **tasks) {
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
     rocksdb_writeoptions_t *writeoptions = rocksdb_writeoptions_create();
     rocksdb_writeoptions_disable_WAL(writeoptions, 1);
     char *err = NULL;
 
-    for (int i = 0; i < cnt; ++i) {
-        sds key = tasks[i]->key;
+    for (size_t i = 0; i < cnt; ++i) {
+        sds rock_key = tasks[i]->rock_key;
         sds val = tasks[i]->val;
-        rocksdb_writebatch_put(batch, key, sdslen(key), val, sdslen(val));
+        rocksdb_writebatch_put(batch, rock_key, sdslen(rock_key), val, sdslen(val));
     }
     rocksdb_write(rockdb, writeoptions, batch, &err);
     if (err) {
@@ -333,7 +366,7 @@ static void* entryInWriteThread(void *arg) {
 
     uint sleepMicro = START_SLEEP_MICRO;
     struct WriteTask* tasks[ROCK_WRITE_PICK_MAX_LEN];
-    int pick_cnt = 0;
+    size_t pick_cnt = 0;
 
     while(1) {
         pick_cnt = pickWriteTasksInWriteThread(tasks, pick_cnt);
@@ -402,9 +435,11 @@ const char* getRockdbPath() {
 /*                                 */
 /*                                 */
 
-/* return C_ERR if on_fly_task_cnt has not been cleared by main thread, i.e., main thead has not consumed them */
-/* we will copy the keys of task to pick_keys for thread safety or efficiecy */
-static int pickReadTasksInReadThread(size_t *pick_cnt, sds *pick_keys) {
+/* return C_ERR if on_fly_task_cnt has not been cleared by main thread, 
+ *        i.e., main thead has not consumed them 
+ * We will use sds array for pick_keys for no memory allocation 
+ * to perform good in thread contention */
+static int pickReadTasksInReadThread(size_t *pick_cnt, sds *pick_rock_keys) {
     size_t cnt = 0;
 
     lockRockRead();
@@ -414,35 +449,32 @@ static int pickReadTasksInReadThread(size_t *pick_cnt, sds *pick_keys) {
         return C_ERR;
     }
 
-    if (dictSize(read_candidates) == 0) {
+    if (dictSize(read_rock_key_candidates) == 0) {
         unlockRockRead();
         *pick_cnt = 0;
         return C_OK;
     }
-
-    // we try to pick some read tasks because the stream_waiting_keys has higher priority
+    
     dictIterator *di;
     dictEntry *de;
-
-    int stream_cnt = dictSize(stream_wait_keys);
+    size_t stream_cnt = dictSize(stream_wait_rock_keys);
     if (stream_cnt) {
-        di = dictGetIterator(stream_wait_keys);
-        while ((de = dictNext(di))) {
-            pick_keys[cnt] = dictGetVal(de);        // copy task key
-            ++cnt;
-            if (cnt == MAX_READ_TASK_NUM) break;
-        }
-        dictReleaseIterator(di);
+        // we try to pick some read tasks because the stream_waiting_keys has higher priority
+        di = dictGetIterator(stream_wait_rock_keys);
     } else {
-        di = dictGetIterator(read_candidates);
-        while ((de = dictNext(di))) {
-            pick_keys[cnt] = dictGetVal(de);
-            ++cnt;
-            if (cnt == MAX_READ_TASK_NUM) break;    // copy 
-        }
+        di = dictGetIterator(read_rock_key_candidates);
     }
+    while ((de = dictNext(di))) {
+        pick_rock_keys[cnt] = dictGetKey(de);        // add task key of sds
+        on_fly_rock_keys[cnt] = pick_rock_keys[cnt];
+        ++cnt;
+        if (cnt == MAX_READ_TASK_NUM) break;
+    }
+    dictReleaseIterator(di);
 
-    on_fly_task_cnt = cnt;      // indicating there are some read tasks on fly
+    // It indicates there are some read tasks on fly and avoids repeated picking for the same keys
+    // because main thread will consume the read-done keys and associated vals of on_fly_vals
+    on_fly_task_cnt = cnt;      
 
     unlockRockRead();
 
@@ -458,47 +490,78 @@ static void signalMainThreadByPipeInReadThread() {
     serverAssert(n == 1);
 }
 
-static void doReadTasksInReadThread(size_t task_cnt, sds *task_keys) {
+static void readFromWriteQueueFirstInReadThread(const size_t task_cnt, sds const* const task_rock_keys,
+                                                sds *vals) {
+    listIter li;
+    listNode *ln;
+
+    lockRockWrite();
+    // We assume the write_queue is short
+    for (size_t i = 0; i < task_cnt; ++i) {
+        sds read_rock_key = task_rock_keys[i];
+        listRewind(write_queue, &li);
+        while ((ln = listNext(&li))) {
+            struct WriteTask *write_task = listNodeValue(ln);
+            sds write_rock_key = write_task->rock_key;
+            if (sdslen(read_rock_key) == sdslen(write_rock_key) && 
+                sdscmp(read_rock_key, write_rock_key) == 0) {
+                serverLog(LL_WARNING, "found key in write queue, key = %s", write_rock_key+2);
+                sds copy_val = sdsdup(write_task->val);
+                vals[i] = copy_val;
+            } else {
+                vals[i] = NULL;
+            }
+        }
+    }
+    unlockRockWrite();
+}
+
+/* For real read, we need to check the write_queue first because write and read are all async 
+ * check addRockWriteTaskOfString() for more details */
+static void doReadTasksInReadThread(const size_t task_cnt, sds const* const task_rock_keys) {
     serverAssert(task_cnt > 0 && task_cnt <= MAX_READ_TASK_NUM);
+
+    sds in_write_queue_vals[MAX_READ_TASK_NUM];
+    readFromWriteQueueFirstInReadThread(task_cnt, task_rock_keys, in_write_queue_vals);
 
     char* rockdb_vals[MAX_READ_TASK_NUM];
     size_t val_sizes[MAX_READ_TASK_NUM];
     char* errs[MAX_READ_TASK_NUM];
+    size_t rock_key_sizes[MAX_READ_TASK_NUM];
 
-    size_t key_sizes[MAX_READ_TASK_NUM];
     for (size_t i = 0; i < task_cnt; ++i) {
-        key_sizes[i] = sdslen(task_keys[i]);
+        rock_key_sizes[i] = sdslen(task_rock_keys[i]);
     }
 
     rocksdb_readoptions_t *readoptions = rocksdb_readoptions_create();
-    rocksdb_multi_get(rockdb, readoptions, task_cnt, (const char* const *)task_keys, key_sizes, rockdb_vals, val_sizes, errs);
+    rocksdb_multi_get(rockdb, readoptions, task_cnt, (const char* const *)task_rock_keys, rock_key_sizes, rockdb_vals, val_sizes, errs);
     rocksdb_readoptions_destroy(readoptions);
 
-    // we need sds, not char*
+    
     sds vals[MAX_READ_TASK_NUM];
     for (size_t i = 0; i < task_cnt; ++i) {
         if (errs[i]) {
             serverLog(LL_WARNING, "doReadTasksInReadThread() reading from RocksDB failed, err = %s, key = %s",
-                errs[i], task_keys[i]);
+                errs[i], task_rock_keys[i]+2);
             exit(1);
         }
         if (rockdb_vals[i] == NULL) {
             // not found
             vals[i] = val_not_found;
         } else {
+            // we need sds in vals, not char* from RocksDB API
             vals[i] = sdsnewlen(rockdb_vals[i], val_sizes[i]);
+            // free the malloc() resource made by RocksDB API of rocksdb_multi_get()
+            zlibc_free(rockdb_vals[i]);       
         }
-        zlibc_free(rockdb_vals[i]);       // free the malloc() resource made by RocksDB API of rocksdb_multi_get()
     }
 
     lockRockRead();
-
     serverAssert(on_fly_task_cnt == task_cnt);
     for (size_t i = 0; i < task_cnt; ++i) {
         serverAssert(on_fly_vals[i] == NULL);
         on_fly_vals[i] = vals[i];
     }
-
     unlockRockRead();
 
     signalMainThreadByPipeInReadThread();
@@ -506,14 +569,14 @@ static void doReadTasksInReadThread(size_t task_cnt, sds *task_keys) {
 
 static void* entryInReadThread(void *arg) {
     UNUSED(arg);
-    
-    sds pick_keys[MAX_READ_TASK_NUM];
+
+    sds pick_rock_keys[MAX_READ_TASK_NUM];
     size_t pick_cnt;
 
     uint sleepMicro = START_SLEEP_MICRO;
     while (1) {
-        if (pickReadTasksInReadThread(&pick_cnt, pick_keys) == C_ERR) {
-            // we sleep a little while for main thread to consume done_candidates
+        if (pickReadTasksInReadThread(&pick_cnt, pick_rock_keys) == C_ERR) {
+            // we sleep a little while for main thread to consume on_fly_vals
             usleep(START_SLEEP_MICRO);
             continue;
         }
@@ -524,7 +587,8 @@ static void* entryInReadThread(void *arg) {
             if (sleepMicro > MAX_SLEEP_MICRO) 
                 sleepMicro = MAX_SLEEP_MICRO;
         } else {
-            doReadTasksInReadThread(pick_cnt, pick_keys);
+            doReadTasksInReadThread(pick_cnt, pick_rock_keys);
+            sleepMicro = START_SLEEP_MICRO;
         }
     }
 
@@ -546,6 +610,7 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
     serverAssert(n == 1);
 
     lockRockRead();
+
     size_t cnt = 0;
     for (size_t i = 0; i < MAX_READ_TASK_NUM; ++i) {
         if (on_fly_vals[i]) {
@@ -555,19 +620,30 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
         }        
     }
 
+    serverAssert(cnt == on_fly_task_cnt);
+
     for (size_t i = 0; i < cnt; ++i) {
-        sds key = on_fly_keys[i];
+        sds rock_key = on_fly_rock_keys[i];
+
+        uint8_t type;
+        uint8_t dbid;
+        char *key;
+        size_t key_sz;
+
+        decode_rock_key(rock_key, &type, &dbid, &key, &key_sz);
         sds val = on_fly_vals[i];
-        serverLog(LL_WARNING, "read key = %s, val = %s", key, val == val_not_found ? "Not Found!!!" : val);
+
+        serverLog(LL_WARNING, "type = %d, dbid = %d, read key = %s, val = %s", type, dbid, key, val == val_not_found ? "Not Found!!!" : val);
     }
+
     unlockRockRead();
 }
 
 void initRockPipeAndRockRead() {
     pthread_t read_thread;
     int pipefds[2];
-    read_candidates = dictCreate(&readCandidatesDictType, NULL);
-    stream_wait_keys = dictCreate(&streamWaitKeyDictType, NULL);
+    read_rock_key_candidates = dictCreate(&readCandidatesDictType, NULL);
+    stream_wait_rock_keys = dictCreate(&streamWaitKeyDictType, NULL);
     on_fly_task_cnt =0;
     val_not_found = sdsnew("Not found in Rocks");
     for (int i = 0; i < MAX_READ_TASK_NUM; ++i) {

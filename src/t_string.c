@@ -30,6 +30,8 @@
 #include "server.h"
 #include <math.h> /* isnan(), isinf() */
 
+#include "rock.h"
+
 /* Forward declarations */
 int getGenericCommand(client *c);
 
@@ -308,8 +310,8 @@ list* getCmdForRock(client *c) {
     if (val != shared.keyRockVal) return NULL;        
 
     list *rock_keys = listCreate();
-    sds copy = sdsdup(key->ptr);
-    listAddNodeTail(rock_keys, copy);
+    sds rock_key = encode_rock_key_for_string(c->db->id, key->ptr); 
+    listAddNodeTail(rock_keys, rock_key);
     return rock_keys;
 }
 
