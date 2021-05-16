@@ -2052,8 +2052,12 @@ int processCommandAndResetClient(client *c) {
      * freed. */
     serverAssert(c->id != VIRTUAL_CLIENT_ID);       // processCommandAndResetClient() can only be called by concrete client
     c->streamWriting = STREAM_WRITE_INIT;    // after the command exectued in the current c, we need reset streamWriting
-    if (c->id == server.streamCurrentClientId)
-        server.streamCurrentClientId = NO_STREAM_CLIENT_ID;   // if the concrete client is from stream write, we need to clear
+    if (c->id == server.streamCurrentClientId) {
+        // if the concrete client is from stream write, we need to clear
+        server.streamCurrentClientId = NO_STREAM_CLIENT_ID;   
+        // after finished one strem write command, we need goon for the others
+        try_to_execute_stream_commands();       
+    }
     return deadclient ? C_ERR : C_OK;
 }
 

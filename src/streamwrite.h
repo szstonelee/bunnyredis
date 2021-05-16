@@ -11,5 +11,6 @@ void execVirtualCommand();
 int checkAndSetStreamWriting(client *c);
 void initKafkaProducer();
 void setVirtualContextFromConcreteClient(client *concrete);
+void try_to_execute_stream_commands();
 
 #endif

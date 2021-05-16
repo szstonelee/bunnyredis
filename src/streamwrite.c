@@ -269,7 +269,7 @@ static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
  * need an exection context which transfer from concrete client to virtual context */
 void setVirtualContextFromConcreteClient(client *concrete) {
     serverAssert(concrete != server.virtual_client);
-    serverAssert(lookupStreamCurrentClient() == concrete);
+    serverAssert(server.streamCurrentClientId == concrete->id);
     serverAssert(server.virtual_client->argv == NULL);
     serverAssert(concrete->argc > 0);
     serverAssert(concrete->streamWriting == STREAM_WRITE_WAITING || concrete->streamWriting == STREAM_WRITE_FINISH);
@@ -297,6 +297,7 @@ void setVirtualContextFromConcreteClient(client *concrete) {
 
 static void freeVirtualClientContext() {
     client* c = server.virtual_client;
+    serverAssert(c->rockKeyNumber == 0);
 
     // deal with reply. We do not need any reply info
     while(listLength(c->reply)) {
@@ -331,6 +332,9 @@ void execVirtualCommand() {
     // clean up
     server.streamCurrentClientId = NO_STREAM_CLIENT_ID;     // for the next stream client
     freeVirtualClientContext();     // the matched clearing-up for setVirtualClientContext()
+
+    // after the current stream write command finished, we need to go on for other stream commands
+    try_to_execute_stream_commands();
 }
 
 /*                                 */
@@ -589,6 +593,55 @@ static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id,
     return c;
 }
 
+void try_to_execute_stream_commands() {
+    // if there is a stream write unfinished, just return
+    if (server.streamCurrentClientId != NO_STREAM_CLIENT_ID) return;
+
+    while (1) {
+        lockConsumerData();
+
+        if(listLength(rcvMsgs) == 0) {
+            unlockConsumerData();
+            break;     // no message to deal with
+        }
+
+        listIter msg_li;
+        listNode *msg_ln;
+
+        listRewind(rcvMsgs, &msg_li);
+        msg_ln = listNext(&msg_li);
+        serverAssert(msg_ln);
+        sds msg = listNodeValue(msg_ln);
+
+        uint8_t node_id;
+        uint64_t client_id;
+        uint8_t dbid;
+        sds command;
+        list *args;
+
+        // NOTE: parse_msg will allocate memory resource for command and args
+        int ret = parse_msg(msg, &node_id, &client_id, &dbid, &command, &args);
+        if (ret != C_OK) {
+            serverLog(LL_WARNING, "fatel error for parse message!");
+            exit(1);
+        }
+
+        // remove and clean message resource
+        sdsfree(msg);
+        listDelNode(rcvMsgs, msg_ln); 
+
+        unlockConsumerData();     
+
+        // NOTE1: command and args will be cleared
+        // NOTE2: processCommandForStreamWrite() maybe call back, so we need it out of lock
+        client *c = processCommandForStreamWrite(node_id, client_id, dbid, command, args);
+
+        // if current stream client id is not finished, we need break
+        if (server.streamCurrentClientId != NO_STREAM_CLIENT_ID) break;
+        serverAssert(c->rockKeyNumber == 0);     
+    }    
+}
+
 /* the event handler is executed from main thread, which is signaled by the pipe
  * from the rockdb thread. When it is called by the eventloop, there is 
  * a return result in rockJob */
@@ -603,47 +656,7 @@ static void streamConsumerSignalHandler(struct aeEventLoop *eventLoop, int fd, v
     size_t n = read(server.stream_pipe_read, tmpUseBuf, 1);     
     serverAssert(n == 1);
 
-    if (lookupStreamCurrentClient() && lookupStreamCurrentClient()->rockKeyNumber > 0)
-        return;     // current stream client has not finshed for rock key
-
-    serverAssert(lookupStreamCurrentClient() == NULL);
-
-    lockConsumerData();
-
-    if(listLength(rcvMsgs) == 0) {
-        unlockConsumerData();
-        return;     // no message to deal with
-    }
-
-    listIter msg_li;
-    listNode *msg_ln;
-    listRewind(rcvMsgs, &msg_li);
-    while ((msg_ln = listNext(&msg_li))) {
-        sds msg = listNodeValue(msg_ln);
-
-        uint8_t node_id;
-        uint64_t client_id;
-        uint8_t dbid;
-        sds command;
-        list *args;
-        // NOTE: parse_msg will allocate memory resource for command and args
-        int ret = parse_msg(msg, &node_id, &client_id, &dbid, &command, &args);
-        if (ret != C_OK) {
-            serverLog(LL_WARNING, "fatel error for parse message!");
-            exit(1);
-        }
-
-        // NOTE: command and args will be cleared
-        client *c = processCommandForStreamWrite(node_id, client_id, dbid, command, args);
-
-        // remove and clean message resource
-        sdsfree(msg);
-        listDelNode(rcvMsgs, msg_ln);      
-
-        if (c->rockKeyNumber) break;  // if stream write block by rock, we need to exit the message loop
-    }
-
-    unlockConsumerData();
+    try_to_execute_stream_commands();
 }
 
 /* signal main thread which will call streamConsumerSignalHandler() */
@@ -745,7 +758,7 @@ static void* entryInConsumerThread(void *arg) {
         // proper message
         serverAssert(strcmp(rd_kafka_topic_name(rkm->rkt), bunnyRedisTopic) == 0 && rkm->len > 0);
         addRcvMsgInConsumerThread(rkm->len, rkm->payload);
-        signalMainThreadByPipeInConsumerThread();   // notify main thread
+        signalMainThreadByPipeInConsumerThread();   // notify main thread to perform streamConsumerSignalHandler()
     
         rd_kafka_message_destroy(rkm);
     }

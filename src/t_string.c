@@ -306,7 +306,6 @@ list* getCmdForRock(client *c) {
     robj *key = c->argv[1];
     robj *val = lookupKeyRead(c->db, key);
 
-    // right now key with string type can have value of keyRockVal, so we do not need to checkType()
     if (val != shared.keyRockVal) return NULL;        
 
     list *rock_keys = listCreate();
@@ -715,6 +714,18 @@ void appendCommand(client *c) {
     notifyKeyspaceEvent(NOTIFY_STRING,"append",c->argv[1],c->db->id);
     server.dirty++;
     addReplyLongLong(c,totlen);
+}
+
+list* appendCmdForRock(client *c) {
+    robj *key = c->argv[1];
+    robj *val = lookupKeyRead(c->db, key);
+
+    if (val != shared.keyRockVal) return NULL;        
+
+    list *rock_keys = listCreate();
+    sds rock_key = encode_rock_key_for_string(c->db->id, key->ptr); 
+    listAddNodeTail(rock_keys, rock_key);
+    return rock_keys;
 }
 
 void strlenCommand(client *c) {

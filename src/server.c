@@ -252,7 +252,7 @@ struct redisCommand redisCommandTable[] = {
      "write use-memory @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"append",NULL,1,appendCommand,3,
+    {"append",appendCmdForRock,1,appendCommand,3,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
