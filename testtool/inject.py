@@ -1,7 +1,6 @@
 import redis
 import random
-import threading
-import time
+
 
 POOL0 = redis.ConnectionPool(host='192.168.64.4',
                             port='6379',

@@ -1,4 +1,18 @@
 
+NOTE: Linux下，需要设置足够大的open files limit，否则，RocksDB产生很多文件，可能导致crash，方法如下：
+```
+sudo -i
+vi /etc/security/limits.conf
+// add the following two lines in the limits.conf file
+* hard nofile 97816
+* soft nofile 97816
+// please remember to logout and login to make the adjustment effect
+// check (before usually 1024, after it will be shown as 97816)
+// do not forget to remove the old RocksDB folder, 
+rm -rf /tmp/bunnyrocksdb
+ulimit -n
+```
+
 用官网推荐的Kafka C Library, https://docs.confluent.io/platform/current/clients/index.html#, https://github.com/edenhill/librdkafka
 
 NOTE: when start bunny-redis use --nodeid=<distinct node id> or clear the topic in Kafka

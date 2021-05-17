@@ -93,9 +93,11 @@ struct redisServer server = {.clientIdTable = NULL, .streamCurrentClientId = NO_
  *       by call this  lookupStreamCurrentClient() */
 client* lookupStreamCurrentClient() {
     if (server.streamCurrentClientId == NO_STREAM_CLIENT_ID) return NULL;
+
     if (server.streamCurrentClientId == VIRTUAL_CLIENT_ID) return server.virtual_client;
 
     dictEntry *de = dictFind(server.clientIdTable, (const void*)server.streamCurrentClientId);
+
     if (!de) {
         return server.virtual_client;       // if stream client has been destroyed, we switch to virtual client
     } else {
@@ -1131,7 +1133,7 @@ struct redisCommand redisCommandTable[] = {
      "admin no-script ok-stale",
      0,NULL,0,0,0,0,0,0},
 
-    {"debugevict",NULL,0,debugEvictCommand,-1,
+    {"debugevict",NULL,0,debugEvictCommand,2,
      "read-only fast @connection",
      0,NULL,0,0,0,0,0,0},
 
@@ -1469,6 +1471,9 @@ dictType dbDictType = {
     dictExpandAllowed           /* allow to expand */
 };
 
+/* Because Redis stores lru in a field of robj vlaue in db->dict. 
+ * But the value may be dumped to RocksDB by rockevict.c.
+ * So we need store lru with the key. Check db->key_lrus */ 
 dictType keyLruType = {
     dictSdsHash,                /* hash function */
     NULL,                       /* key dup */

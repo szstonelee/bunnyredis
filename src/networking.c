@@ -1342,16 +1342,17 @@ void freeClient(client *c) {
         }
     }
 
-    // NOTE: some clients is belong to slave or virtual(like script), so these clients are not in server.cliendIdTable
-    // We need to delete the client from server.clientIdTable which is valid
-    // the code until the end does not have any "return" statement which guarantee the client will be destroyed
-    // after the client was removed from server.clientIdTable first
+    // NOTE: Some clients not-concrete(like script), these clients are not in server.cliendIdTable.
+    //       Slave client could be in server.cliendIdTable but we does not support Cluster and Master/Slave mode.
+    //       The following code do not have any "return" statement which guarantees the client will be destroyed
+    //       freeClientAsync() may be some issues but right now it is for Debug and LUA which we does not support
     if (server.clientIdTable) {
-        dictDelete(server.clientIdTable, (const void*)c->id);        // NOTE: may be not found and the return value is DICT_ERR
         if (c->id == server.streamCurrentClientId) {
             // we need to switch concrete c to virtual client if c is current stream client
             setVirtualContextFromConcreteClient(c);
         }
+        // NOTE: c->id may be not found in server.clientIdTable
+        dictDelete(server.clientIdTable, (const void*)c->id);        
     }
 
     /* Log link disconnection with slave */
@@ -2151,9 +2152,10 @@ void processInputBuffer(client *c) {
 
             // NOTE: for test of injecting lots of keys, you can commout out the following code and then enbale it again
             if (checkMemInProcessBuffer(c) != C_OK) {
-                serverLog(LL_WARNING, "memory is low!!!");
-                int res = performKeyOfStringEvictions();    // try to free memory
-                if (res != C_OK) {
+                int evict_res = performKeyOfStringEvictions();    // try to free memory
+                if (evict_res != C_OK) {
+                    serverLog(LL_WARNING, "memory is low!!! memory used = %lu, memory limit = %llu", 
+                              zmalloc_used_memory(), server.bunnymem);
                     rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
                        c->argv[0]->ptr);
                     commandProcessed(c);

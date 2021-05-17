@@ -73,6 +73,10 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
             } else {
                 val->lru = LRU_CLOCK();
                 dictEntry *lru_de = dictFind(db->key_lrus,key->ptr);
+                if (!lru_de) {
+                    serverLog(LL_WARNING, "lookupKey() set lru for key failed, key = %s", (sds)key->ptr);
+                    exit(1);
+                }
                 serverAssert(lru_de);
                 lru_de->v.u64 = val->lru;
             }

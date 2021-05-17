@@ -352,19 +352,30 @@ void debugReportMemAndKey() {
         dictReleaseIterator(di);
 
         if (keyCnt)
-            serverLog(LL_WARNING, "dbid = %d, keyCnt = %d, strCnt = %d, rockCnt = %d", i, keyCnt, strCnt, rockCnt);
+            serverLog(LL_WARNING, "dbid = %d, keyCnt = %d, strCnt = %d, rockCnt = %d, stat_key_str_ cnt = %lld, stat_key_str_rockval_cnt = %lld", 
+                                   i, keyCnt, strCnt, rockCnt, 
+                                   (server.db+i)->stat_key_str_cnt, (server.db+i)->stat_key_str_rockval_cnt);
     }
 }
 
 void debugEvictCommand(client *c) {
-    serverLog(LL_WARNING, "debugEvictCommand() has been called!");
+    sds flag = c->argv[1]->ptr;
 
-    serverLog(LL_WARNING, "===== before evcition ===========");
-    debugReportMemAndKey();
-    serverLog(LL_WARNING, "===== after evcition ===========");
-    int res = performKeyOfStringEvictions();
-    serverLog(LL_WARNING, "performKeyOfStringEvictions() res = %s", res == C_OK ? "C_OK" : "C_ERR");
-    debugReportMemAndKey();
+    if (strcasecmp(flag, "evict") == 0) {
+        serverLog(LL_WARNING, "debugEvictCommand() has been called!");
+
+        serverLog(LL_WARNING, "===== before evcition ===========");
+        debugReportMemAndKey();
+        serverLog(LL_WARNING, "===== after evcition ===========");
+        int res = performKeyOfStringEvictions();
+        serverLog(LL_WARNING, "performKeyOfStringEvictions() res = %s", res == C_OK ? "C_OK" : "C_ERR");
+        debugReportMemAndKey();
+    } else if (strcasecmp(flag, "report") == 0) {
+        debugReportMemAndKey();
+    } else {
+        addReplyError(c, "wrong flag for debugevict!");
+        return;
+    }
 
     addReplyBulk(c,c->argv[0]);
 }
@@ -376,8 +387,6 @@ void debugEvictCommand(client *c) {
 /* please referecne server.c processCommand(), we use some similiar code but we can not */
 /* call processCommand() because processCommand() is guaranteed to be passed through all checks */
 int checkMemInProcessBuffer(client *c) {
-    return C_OK;        // for test
-
     serverAssert(c->argc > 0);
 
     int out_of_memory = (zmalloc_used_memory() > server.bunnymem);

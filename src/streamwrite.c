@@ -13,9 +13,11 @@ static pthread_spinlock_t consumerLock;
 static pthread_spinlock_t producerLock;
 
 #define START_SLEEP_MICRO   16
-#define MAX_SLEEP_MICRO     1024            // max sleep for 1 ms
+#define MAX_SLEEP_MICRO     1024    // max sleep for 1 ms
 
 #define START_OFFSET        0       // consumer start offset to read
+
+#define RCV_MSGS_TOO_LONG   1000    // if we recevice to much messages and not quick to consume, it just warns
 
 static int kafkaReadyAndTopicCorrect = 0;   // producer start for check kafka state and main thread check it for correctness
 static const char *bootstrapBrokers = "127.0.0.1:9092,";
@@ -48,11 +50,10 @@ static void freeArgAsSdsString(void *arg) {
     sdsfree(arg);
 }
 
-/* main thread call this to add command to sndMsgs */
-/* We think every parameter (including command name) stored in client argv is String Object */
+/* Main thread call this to add command to sndMsgs 
+ * We think every parameter (including command name) stored in client argv is String Object */
 static void addCommandToStreamWrite(client *c) {
     // serialize the command
-
     // node id
     uint8_t node_id = (uint8_t)server.node_id;
     sds buf = sdsnewlen(&node_id, sizeof(node_id));
@@ -64,7 +65,8 @@ static void addCommandToStreamWrite(client *c) {
     buf = sdscatlen(buf, &dbid, sizeof(dbid));
     // command name
     serverAssert(c->argv[0]->encoding == OBJ_ENCODING_RAW || c->argv[0]->encoding == OBJ_ENCODING_EMBSTR);
-    serverAssert(sdslen(c->argv[0]->ptr) <= UINT8_MAX);
+    // right now Redis commands name is less than 255, check https://redis.io/commands
+    serverAssert(sdslen(c->argv[0]->ptr) <= UINT8_MAX);     
     uint8_t cmd_len = sdslen(c->argv[0]->ptr);
     buf = sdscatlen(buf, &cmd_len, sizeof(cmd_len));
     buf = sdscatlen(buf, c->argv[0]->ptr, sdslen(c->argv[0]->ptr));
@@ -138,16 +140,20 @@ int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid,
     return C_OK;
 }
 
-// please reference scripting.c
-// we create a virtual client which will execute a command in the virtual client context
+/* What is a virtual client ? 
+ * please reference scripting.c
+ * We create a virtual client which will execute a command in the virtual client context
+ * for streamwrite which may come from other nodes's clients or 
+ * the client in the node which issue a streamwrite comand then the connection is broken in asyinc mode */
 
-// reference server.c processCommand()
-// return C_ERR if the command check failed (and will exec without data modification but reply error info) 
-//        or the command is "quit" COMMAND, 
-//        so the client can go on to reply fail info to real client or execute QUIT command
-// return C_OK, the commmand check ok. 
-//        If the command is in the stream catagory which needs to be streamed, it will set  STREAM_WRITE_WAITING for concrete client
-//        but the caller need to check c->streamWritng
+/* reference server.c processCommand()
+ * return C_ERR if the command check failed (and will exec without data modification but reply error info) 
+ *        or the command is "quit" COMMAND, 
+ *        so the client can go on to reply fail info to real client or execute QUIT command
+ * return C_OK, the commmand check ok. 
+ *        If the command is in the stream catagory which needs to be streamed, 
+ *        it will set  STREAM_WRITE_WAITING for concrete client
+ *        but the caller need to check c->streamWritng */
 int checkAndSetStreamWriting(client *c) {
     serverAssert(c->streamWriting == STREAM_WRITE_INIT);
 
@@ -224,8 +230,10 @@ int checkAndSetStreamWriting(client *c) {
     return C_OK;
 }
 
-/* set virtual client context for command, dbid ars so it can call execVritualCommand() directly later */
-/* args is not like c->args, it exclude the first command name and it is based on sds string not robj* */
+/* set virtual client context for command, dbid and args 
+ * so it can call execVritualCommand() directly later 
+ * args is not like c->args, it exclude the first command name 
+ * and it is based on sds string not robj* */
 static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
     // setVirtualClinetContext() is not reentry if not called freeVirtualClientContext() before (or init)
     serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);        
@@ -274,6 +282,15 @@ void setVirtualContextFromConcreteClient(client *concrete) {
     serverAssert(concrete->argc > 0);
     serverAssert(concrete->streamWriting == STREAM_WRITE_WAITING || concrete->streamWriting == STREAM_WRITE_FINISH);
 
+    // NOTE: We does not switch streamCurrentClientId to VIRTUAL_CLIENT_ID, 
+    //       We need to keep server.streamCurrentClientId as before.
+    //       Although we could switch, but it is not good for debug error.
+    //       In rock phase, when the ids of one rock key is returned, we can check them with streamCurrentClientId.
+    //       Becasue stream write is one bye one, 
+    //       and ids in rock read task list are either concrete id (including broken concrete id) 
+    //       or VIRTUAL_CLIENT_ID indicating from other nodes at the time of checkAndSetRockKeyNumber()
+    // *** server.streamCurrentClientId = VIRTUAL_CLIENT_ID; ***
+
     serverAssert(concrete->db->id >= 0 && concrete->db->id < server.dbnum);
     uint8_t dbid = (uint8_t)concrete->db->id;
     sds command = concrete->argv[0]->ptr;
@@ -285,9 +302,7 @@ void setVirtualContextFromConcreteClient(client *concrete) {
     }
 
     setVirtualClinetContext(dbid, command, args);
-    // NOTE: We can not switch to virtual client, we need server.streamCurrentClientId as before
-    // because rock phase will need it to perform the stream write for the broken client
-    // server.streamCurrentClientId = VIRTUAL_CLIENT_ID;                   
+                       
     server.virtual_client->rockKeyNumber = concrete->rockKeyNumber;     // do not forget to set the rockyNumber
 
     // clean up
@@ -318,9 +333,9 @@ static void freeVirtualClientContext() {
     c->cmd = c->lastcmd = NULL;
 }
 
-// reference scripting.c luaRedisGenericCommand
-// right now for simplicity, we do not use cache
-// from networking.c processInlineBuffer(), I guess all arguments are string object
+/* reference scripting.c luaRedisGenericCommand
+ * right now for simplicity, we do not use cache
+ * from networking.c processInlineBuffer() */
 void execVirtualCommand() {
     /* Run the command */
     serverAssert(lookupStreamCurrentClient() == server.virtual_client);
@@ -343,8 +358,8 @@ void execVirtualCommand() {
 /*                                 */
 /*                                 */
 
-/* this is be called in produer thread. NOTE: we clear payload here */
-/* reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
+/* this is be called in produer thread. NOTE: we clear payload here 
+ * reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 static void dr_msg_cb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque) {
     UNUSED(rk);
     UNUSED(opaque);
@@ -404,7 +419,7 @@ static sds pickSndMsgInProducerThread() {
     return msg;
 }
 
-// reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c
+/* reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
     serverAssert(msg);
 
@@ -433,8 +448,8 @@ static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic
     exit(1);
 }
 
-/* We use rd_kafka_metadata() to check the topic valid in Kafka */
-/* Most rdkafka API are local only, we need a API for test Kafka liveness */
+/* We use rd_kafka_metadata() to check the topic valid in Kafka 
+ * Most rdkafka API are local only, we need a API for test Kafka liveness */
 void checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
     const struct rd_kafka_metadata *data;
     rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 1, rkt, &data, 50000);  // 5 seconds
@@ -449,7 +464,7 @@ void checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
 }
 
 /* this is the producer thread entrance. Here we init kafka prodcer environment 
-*  and then start a forever loop for send messages and deal with error */
+ * and then start a forever loop for send messages and deal with error */
 static void* entryInProducerThread(void *arg) {
     UNUSED(arg);
 
@@ -558,6 +573,12 @@ static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id,
                                             sds command, list *args) {
     serverAssert(server.streamCurrentClientId == NO_STREAM_CLIENT_ID);
 
+    // server.streamCurrentClientId is changed first only here
+    // If server.streamCurrentClientId == virtual_client->id, i.e, VIRTUAL_CLIENT_ID, it means
+    // 1. the stream write is from other nodes
+    // 2. the stream write is from the node but the client has dropped the connection before here
+    // 
+    // NOTE: If the concrete client right now is valid but later has been dropped, we 
     client *c = server.virtual_client;
     if (node_id == server.node_id) {
         dictEntry *de = dictFind(server.clientIdTable, (const void*)client_id);
@@ -593,6 +614,12 @@ static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id,
     return c;
 }
 
+/* When the concrete client finished a stream write command in network.c processCommandAndResetClient()
+ * or the virtual client finished a stream write command in execVirtualCommand(),
+ * or just the main thread got a message from stream write in streamConsumerSignalHandler()
+ * they all need to call try_to_execute_stream_commands() because other stream commands are waiting on line.
+ * In otherwords, when server.streamCurrentClientId set to NO_STREAM_CLIENT_ID, 
+ * it means the stream write can go on */
 void try_to_execute_stream_commands() {
     // if there is a stream write unfinished, just return
     if (server.streamCurrentClientId != NO_STREAM_CLIENT_ID) return;
@@ -626,14 +653,15 @@ void try_to_execute_stream_commands() {
             exit(1);
         }
 
-        // remove and clean message resource
+        // clean message and args memory resource
         sdsfree(msg);
         listDelNode(rcvMsgs, msg_ln); 
 
         unlockConsumerData();     
 
         // NOTE1: command and args will be cleared
-        // NOTE2: processCommandForStreamWrite() maybe call back, so we need it out of lock
+        // NOTE2: processCommandForStreamWrite() maybe call back, so we need it out of lock 
+        //        to aovid lock reentry.
         client *c = processCommandForStreamWrite(node_id, client_id, dbid, command, args);
 
         // if current stream client id is not finished, we need break
@@ -673,24 +701,11 @@ static void addRcvMsgInConsumerThread(size_t len, void *payload) {
 
     sds copy = sdsnewlen(payload, len);
     listAddNodeTail(rcvMsgs, copy);
-    if (listLength(rcvMsgs) >= 1000)
+    if (listLength(rcvMsgs) >= RCV_MSGS_TOO_LONG)
         serverLog(LL_WARNING, "addRcvMsgInConsumerThread() rcvMsgs too long, list length = %ld", listLength(rcvMsgs));
         
     unlockConsumerData();
 }
-
-/* We need jump to the last msg offset main thread consumed */
-/* For debug reason, we set to the last offset of the topic/parition(0) */
-/*
-static void checkOffset(rd_kafka_t *rk, rd_kafka_topic_partition_list_t *subscription, rd_kafka_topic_partition_t* zeroPartition) {
-    rd_kafka_error_t *err;
-
-    err = rd_kafka_seek_partitions(rk, subscription, 1000);       // wait for 1 second
-    if (err)
-        serverPanic("jumpToOffset() failed for reason = %s", rd_kafka_err2str(rd_kafka_error_code(err)));
-    serverLog(LL_WARNING, "seek offset = %ld", zeroPartition->offset);
-}
-*/
 
 /* this is the consumer thread entrance */
 static void* entryInConsumerThread(void *arg) {
@@ -731,14 +746,10 @@ static void* entryInConsumerThread(void *arg) {
     zeroPartion = rd_kafka_topic_partition_list_add(subscription, bunnyRedisTopic, 0);
     zeroPartion->offset = START_OFFSET;
     /* Subscribe to the list of topics, NOTE: only one in the list of topics */
-    // err = rd_kafka_subscribe(rk, subscription);
     err = rd_kafka_assign(rk, subscription);
     if (err) 
         serverPanic("initKafkaConsumer failed for rd_kafka_subscribe() reason = %s", rd_kafka_err2str(err));
     rd_kafka_topic_partition_list_destroy(subscription);
-
-    // jump to the specific offset
-    // checkOffset(rk, subscription, zeroPartion);     // check the offset in zeroPartition, if fail stop 
 
     while(1) {
         rd_kafka_message_t *rkm = rd_kafka_consumer_poll(rk, 100);
@@ -758,7 +769,8 @@ static void* entryInConsumerThread(void *arg) {
         // proper message
         serverAssert(strcmp(rd_kafka_topic_name(rkm->rkt), bunnyRedisTopic) == 0 && rkm->len > 0);
         addRcvMsgInConsumerThread(rkm->len, rkm->payload);
-        signalMainThreadByPipeInConsumerThread();   // notify main thread to perform streamConsumerSignalHandler()
+        // notify main thread to perform streamConsumerSignalHandler()
+        signalMainThreadByPipeInConsumerThread();   
     
         rd_kafka_message_destroy(rkm);
     }
