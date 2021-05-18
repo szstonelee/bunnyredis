@@ -2153,11 +2153,18 @@ void processInputBuffer(client *c) {
             // NOTE: for test of injecting lots of keys, you can commout out the following code and then enbale it again
             if (checkMemInProcessBuffer(c) != C_OK) {
                 int evict_res = performKeyOfStringEvictions();    // try to free memory
-                if (evict_res != C_OK) {
+                if (evict_res == EVICT_ROCK_TIMEOUT) {
                     serverLog(LL_WARNING, "memory is low!!! memory used = %lu, memory limit = %llu", 
                               zmalloc_used_memory(), server.bunnymem);
                     rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
-                       c->argv[0]->ptr);
+                                        c->argv[0]->ptr);
+                    commandProcessed(c);
+                    continue;
+                } else if (evict_res == EVICT_ROCK_PERCENTAGE) {
+                    serverLog(LL_WARNING, "memory is low and too many keys in RocksDB!!! memory used = %lu, memory limit = %llu", 
+                              zmalloc_used_memory(), server.bunnymem);
+                    rejectCommandFormat(c, "BunnyRedis memory is over limit and too mary keys(%%%d)' value in RocksDB. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
+                                        ROCK_KEY_UPPER_PERCENTAGE, c->argv[0]->ptr);
                     commandProcessed(c);
                     continue;
                 }

@@ -284,11 +284,13 @@ void setVirtualContextFromConcreteClient(client *concrete) {
 
     // NOTE: We does not switch streamCurrentClientId to VIRTUAL_CLIENT_ID, 
     //       We need to keep server.streamCurrentClientId as before.
-    //       Although we could switch, but it is not good for debug error.
-    //       In rock phase, when the ids of one rock key is returned, we can check them with streamCurrentClientId.
-    //       Becasue stream write is one bye one, 
-    //       and ids in rock read task list are either concrete id (including broken concrete id) 
-    //       or VIRTUAL_CLIENT_ID indicating from other nodes at the time of checkAndSetRockKeyNumber()
+    //       In rock phase, when rock key is returned, we check all client ids of the key.
+    //       Then we can compare them with streamCurrentClientId becasue stream write is one bye one. 
+    //       If the before-concrete client id is kept in server.streamCurrentClientId, 
+    //       we can know that the command of the before-concrete client is stream write or not.
+    //       For no stream write command, we need to skip it because they are read commands. 
+    //       But for stream write, we must do it even the concrete client has dropped the connection.
+    //       Check checkAndSetRockKeyNumber() and rockReadSignalHandler in rock.c
     // *** server.streamCurrentClientId = VIRTUAL_CLIENT_ID; ***
 
     serverAssert(concrete->db->id >= 0 && concrete->db->id < server.dbnum);
@@ -761,7 +763,8 @@ static void* entryInConsumerThread(void *arg) {
                 serverLog(LL_WARNING, "offset %d for Broker: Offset out of range!!!", START_OFFSET);
                 exit(1);
             }
-            serverLog(LL_WARNING, "Consumer error(but Kafka can handle): err = %d, reason = %s", rkm->err, rd_kafka_message_errstr(rkm));
+            serverLog(LL_WARNING, "Consumer error(but Kafka can handle): err = %d, reason = %s", 
+                      rkm->err, rd_kafka_message_errstr(rkm));
             rd_kafka_message_destroy(rkm);
             continue;
         }

@@ -167,25 +167,41 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
     uint64_t client_id = c->id;
     listIter li;
     listNode *ln;
+    int need_free_key;
+    sds rock_key;
+    sds saved_rock_key;
+    dictEntry *de;
+    list *new_clientids;
+    list *saved_clientids;
+    int dict_add_res;
     listRewind(rock_keys, &li);
     while ((ln = listNext(&li))) {
-        int need_free_key = 1;
-        sds rock_key = listNodeValue(ln);
-        dictEntry *de = dictFind(read_rock_key_candidates, rock_key);
+        need_free_key = 1;
+        rock_key = listNodeValue(ln);
+        de = dictFind(read_rock_key_candidates, rock_key);
 
         if (!de) {
-            list *new_clientids = listCreate();
+            new_clientids = listCreate();
             listAddNodeTail(new_clientids, (void *)client_id);
             dictAdd(read_rock_key_candidates, rock_key, new_clientids);
-            need_free_key = 0;
-        } else {
-            list *saved_clientids = dictGetVal(de);
-            listAddNodeTail(saved_clientids, (void *)client_id);
-        }
+            need_free_key = 0;      // read_rock_key_candidates own the rock_key now
 
-        if (is_stream_write)
-            // NOTE: maybe add the same key serveral times
-            dictAdd(stream_wait_rock_keys, rock_key, NULL);     
+            if (is_stream_write) {
+                dict_add_res = dictAdd(stream_wait_rock_keys, rock_key, NULL);  
+                serverAssert(dict_add_res == DICT_OK);  // must be a new key in stream_wait_rock_keys
+            }   
+
+        } else {
+            saved_clientids = dictGetVal(de);
+            listAddNodeTail(saved_clientids, (void *)client_id);
+
+            if (is_stream_write) {
+                // NOTE: key in stream_wait_rock_keys must point to the same object in read_rock_key_candidates
+                saved_rock_key = dictGetKey(de);
+                // NOTE: maybe add the same key serveral times, but it does not matter
+                dictAdd(stream_wait_rock_keys, saved_rock_key, NULL);
+            }
+        }
 
         if (need_free_key) sdsfree(rock_key);
     }
@@ -197,6 +213,7 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
     listRelease(rock_keys);
 }
 
+/* allocate memory resouce by return sds */
 sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key) {
     sds rock_key;
 
@@ -208,6 +225,7 @@ sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key) {
     return rock_key;
 }
 
+/* allocate memory resouce by return sds */
 sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field) {
     sds rock_key;
 
@@ -222,6 +240,7 @@ sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field)
     return rock_key;
 }
 
+/* no memory allocation */
 static void decode_rock_key(sds const rock_key, uint8_t *type, uint8_t *dbid, char **key, size_t *key_sz) {
     serverAssert(sdslen(rock_key) >= 2);
     *type = rock_key[0];
@@ -292,7 +311,9 @@ static size_t pickWriteTasksInWriteThread(struct WriteTask **tasks, const size_t
             ln = listNext(&li);
             struct WriteTask *task = listNodeValue(ln);
             to_free_tasks[i] = task;
-            listDelNode(write_queue, ln);
+            // release resource of the element of write_queue, 
+            // but not the WriteTask resouce in the element
+            listDelNode(write_queue, ln);   
         }
     }
 
@@ -305,9 +326,10 @@ static size_t pickWriteTasksInWriteThread(struct WriteTask **tasks, const size_t
 
     unlockRockWrite();
 
-    // release resource out of lock for performance
+    // release WriteTask resource out of lock for performance
+    struct WriteTask *to_free;
     for (size_t i = 0; i < before_pick_cnt; ++i) {
-        struct WriteTask *to_free = to_free_tasks[i];
+        to_free = to_free_tasks[i];
         serverAssert(to_free && to_free->rock_key && to_free->val);
         sdsfree(to_free->rock_key);
         sdsfree(to_free->val);
@@ -430,8 +452,7 @@ const char* getRockdbPath() {
 /*                                 */
 /*                                 */
 
-/* return C_ERR if on_fly_task_cnt has not been cleared by main thread, 
- *        i.e., main thead has not consumed them
+/* return C_ERR if on_fly_task_cnt has not been consumed by main thread, 
  * return C_OK and the number of picking read tasks in pick_cnt
  * 
  * We will use sds array for pick_rock_keys for no memory allocation 
@@ -452,7 +473,7 @@ static int pickReadTasksInReadThread(size_t *pick_cnt, sds *pick_rock_keys) {
         dictIterator *di;
         dictEntry *de;
         if (dictSize(stream_wait_rock_keys)) {
-            // we try to pick some read tasks because the stream_waiting_keys has higher priority
+            // the stream_waiting_keys has higher priority
             di = dictGetIterator(stream_wait_rock_keys);
         } else {
             di = dictGetIterator(read_rock_key_candidates);
@@ -561,7 +582,7 @@ static void doReadTasksInReadThread(const size_t task_cnt, sds const* const task
     for (size_t i = 0; i < rockdb_read_cnt; ++i) {
         if (errs[i]) {
             serverLog(LL_WARNING, "doReadTasksInReadThread() reading from RocksDB failed, err = %s, key = %s",
-                errs[i], rockdb_keys[i]+2);
+                      errs[i], rockdb_keys[i]+2);
             exit(1);
         }
 
@@ -628,7 +649,8 @@ static void* entryInReadThread(void *arg) {
 /* Recover the shared. to the real value */
 static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, sds const val) {
     if (type == ROCK_STRING_TYPE) {
-        dict *dict = (server.db+dbid)->dict;
+        redisDb *db = server.db+dbid;
+        dict *dict = db->dict;
         dictEntry *de = dictFind(dict, key);
         serverAssert(de);
         robj *dbval = dictGetVal(de);
@@ -638,6 +660,8 @@ static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, s
         }
         robj *recover = createStringObject(val, sdslen(val));
         dictSetVal(dict, de, recover);
+        serverAssert(db->stat_key_str_rockval_cnt);
+        --db->stat_key_str_rockval_cnt;
     } else {
         // TODO: type == ROCK_HASH_TYPE
         serverLog(LL_WARNING, "recover_val() has not supported ROCK_HASH_TYPE");
@@ -667,33 +691,34 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
     list *all_client_ids = listCreate();
     listIter li;
     listNode *ln;
+    sds rock_key;
+    sds val;
+    sds sds_key;
+
+    uint8_t type;
+    uint8_t dbid;
+    char *c_key;
+    size_t c_key_sz;
 
     lockRockRead();
 
     serverAssert(on_fly_task_cnt);
     for (size_t i = 0; i < on_fly_task_cnt; ++i) {
-        sds rock_key = on_fly_rock_keys[i];
+        rock_key = on_fly_rock_keys[i];
         serverAssert(rock_key);
 
-        uint8_t type;
-        uint8_t dbid;
-        char *key;
-        size_t key_sz;
-
         // Decode the rock_key. NOTE: decode_rock_key() will not allocate resource
-        decode_rock_key(rock_key, &type, &dbid, &key, &key_sz);
-        serverAssert(dbid < server.dbnum);
-        serverAssert(type == ROCK_STRING_TYPE || type == ROCK_HASH_TYPE);
-        sds val = on_fly_vals[i];
-        serverAssert(val);
-        if (val == val_not_found) {
+        decode_rock_key(rock_key, &type, &dbid, &c_key, &c_key_sz);
+        val = on_fly_vals[i];
+        if (val == NULL || val == val_not_found) {
             // The real value must in write_queue or RocksDB
-            serverLog(LL_WARNING, "Can not found the vaule in RocksDB for key = %s", key);
+            serverLog(LL_WARNING, "Can not found the vaule in RocksDB for key = %s val is %s", 
+                      c_key, val ? "val is not NULL" : "val is NULL");
             exit(1);
         }      
 
         // recover the real val
-        sds sds_key = sdsnewlen(key, key_sz);
+        sds_key = sdsnewlen(c_key, c_key_sz);
         recover_val(type, dbid, sds_key, val);
         sdsfree(sds_key);
 
@@ -710,11 +735,12 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
         }
         // NOTE: dictDelete(read_rock_key_candidates) will reclaim memory resource 
         //       for the rock_key and the list of clientids. Check dictType readCandidatesDictType for more details.
-        dictDelete(read_rock_key_candidates, rock_key);    
+        dictDelete(read_rock_key_candidates, rock_key);   
 
-        // Reclaim the resource of vals. NOTE: it guaratees the val is not val_not_found
-        sdsfree(on_fly_vals[i]);        
-        on_fly_vals[i] = NULL; 
+        // Reclaim the resource of the val. (The rock key has been reclaimed in the last statement) 
+        // NOTE: It guaratees that the val is not val_not_found
+        sdsfree(val);        
+        on_fly_vals[i] = NULL;      // Do not need to set on_fly_keys[i] to be NULL
     }
 
     on_fly_task_cnt = 0;        // Let read thread go on. Chceck pickReadTasksInReadThread().
@@ -747,16 +773,12 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
                 // It must be from stream write because virtual client only execute stream write commands
                 serverAssert(server.streamCurrentClientId == VIRTUAL_CLIENT_ID);   
 
-            int can_skip = 0;
             if (client_id != VIRTUAL_CLIENT_ID && server.streamCurrentClientId != client_id) {
                 // If the client is of before-concrete client id and not from stream write,
                 // we can skip execVirtualCommand(). 
                 // E.g. The client reads some key with value in RocksDB but the connection is dropped
-                //      before it commes here to be resumed for execVirtualCommand()
-                can_skip = 1;    
-            }
-
-            if (!can_skip) {
+                //      before it commes here to be resumed for execVirtualCommand()   
+            } else {
                 // NOTE: If the client is before-concrete client id, 
                 //       it guarantees the contex of before_concrete client has been switched to virtual context
                 //       Check setVirtualContextFromConcreteClient() for more details

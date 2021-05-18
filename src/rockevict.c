@@ -210,10 +210,9 @@ static int getKeyOfStringPercentage() {
     return (int)((long long)100 * rockCnt / keyCnt);
 }
 
-/* return C_OK if no need to eviction value or evict enough value 
- * return C_ERR 
- *     1. if timeout and not enought memory has been released 
- *     2. the percentage of string key with value in RocksDB of total string key is too high */  
+/* return EVICT_ROCK_OK if no need to eviction value or evict enough value 
+ * return EVICT_ROCK_PERCENTAGE if the percentage of string key with value in RocksDB of total string key is too high
+ * return EVICT_FAIL_TIMEOUT if timeout and not enought memory has been released */
 int performKeyOfStringEvictions(void) {
     int keys_freed = 0;
     size_t mem_tofree;
@@ -226,7 +225,9 @@ int performKeyOfStringEvictions(void) {
 
     // check percentage
     int percentage = getKeyOfStringPercentage();
-    if (percentage >= 98) return C_ERR;     // we do not need to waste time for high percentage of rock keys
+    // we do not need to waste time for high percentage of rock keys
+    // because mostly it will be timeout for no evicting enough memory
+    if (percentage >= ROCK_KEY_UPPER_PERCENTAGE) return EVICT_ROCK_PERCENTAGE;     
     
     mem_tofree = used - server.bunnymem;
     mem_freed = 0;
@@ -320,7 +321,7 @@ int performKeyOfStringEvictions(void) {
         }
     }
 
-    return timeout ? C_ERR : C_OK;
+    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_OK;
 }
 
 void debugReportMemAndKey() {
@@ -368,7 +369,9 @@ void debugEvictCommand(client *c) {
         debugReportMemAndKey();
         serverLog(LL_WARNING, "===== after evcition ===========");
         int res = performKeyOfStringEvictions();
-        serverLog(LL_WARNING, "performKeyOfStringEvictions() res = %s", res == C_OK ? "C_OK" : "C_ERR");
+        serverLog(LL_WARNING, "performKeyOfStringEvictions() res = %s", 
+            res == EVICT_ROCK_OK ? "EVICT_ROCK_OK" : 
+                                   (res == EVICT_ROCK_PERCENTAGE ? "EVICT_ROCK_PERCENTAGE" : "EVICT_ROCK_TIMEOUT"));
         debugReportMemAndKey();
     } else if (strcasecmp(flag, "report") == 0) {
         debugReportMemAndKey();
