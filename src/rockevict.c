@@ -119,6 +119,20 @@ static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru, dictEntry **
     return stored;
 }
 
+/* Given an object returns the min number of milliseconds the object was never
+ * requested, using an approximated LRU algorithm. 
+ * Refercnet evict.c estimateObjectIdleTime() for more details */
+static unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de) {
+    unsigned long long lruclock = LRU_CLOCK();
+    unsigned long long my_lru = de->v.u64;
+    if (lruclock >= my_lru) {
+        return (lruclock - my_lru) * LRU_CLOCK_RESOLUTION;
+    } else {
+        return (lruclock + (LRU_CLOCK_MAX - my_lru)) *
+                    LRU_CLOCK_RESOLUTION;
+    }
+}
+
 /* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
 static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, struct evictKeyPoolEntry *pool) {
     int j, k, count;
@@ -140,7 +154,7 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
 
         // o = dictGetVal(de);
         // idle = estimateObjectIdleTime(o);
-        idle = dictGetUnsignedIntegerVal(lru_de);
+        idle = estimateObjectIdleTimeFromLruDictEntry(lru_de);
 
         /* Insert the element inside the pool.
          * First, find the first empty bucket or the first populated
@@ -207,29 +221,54 @@ static int getKeyOfStringPercentage() {
         rockCnt += db->stat_key_str_rockval_cnt;
     }
 
-    return (int)((long long)100 * rockCnt / keyCnt);
+    if (keyCnt == 0) 
+        return 100;
+    else
+        return (int)((long long)100 * rockCnt / keyCnt);
 }
 
 /* return EVICT_ROCK_OK if no need to eviction value or evict enough value 
  * return EVICT_ROCK_PERCENTAGE if the percentage of string key with value in RocksDB of total string key is too high
- * return EVICT_FAIL_TIMEOUT if timeout and not enought memory has been released */
-int performKeyOfStringEvictions(void) {
+ * return EVICT_FAIL_TIMEOUT if timeout and not enought memory has been released 
+ * If must_od is ture, we ignore the memory over limit check */
+int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
     int keys_freed = 0;
     size_t mem_tofree;
     long long mem_freed; /* May be negative */
     long long delta;
 
     size_t used = zmalloc_used_memory();
-    if (used <= server.bunnymem)
-        return EVICT_OK;        // used memory not over limit
+    if (!must_do && used <= server.bunnymem)
+        return EVICT_OK;        // used memory not over limit and not must_do
 
-    // check percentage
-    int percentage = getKeyOfStringPercentage();
-    // we do not need to waste time for high percentage of rock keys
+    // Check the percentage of RockKey vs total key. 
+    // We do not need to waste time for high percentage of rock keys, e.g. 98%, 
     // because mostly it will be timeout for no evicting enough memory
-    if (percentage >= ROCK_KEY_UPPER_PERCENTAGE) return EVICT_ROCK_PERCENTAGE;     
-    
-    mem_tofree = used - server.bunnymem;
+    if (getKeyOfStringPercentage() >= ROCK_KEY_UPPER_PERCENTAGE) {
+        long long keyCnt = 0;
+        long long rockCnt = 0;
+        redisDb *db;
+        for (int i = 0; i < server.dbnum; ++i) {
+            db = server.db+i;
+            keyCnt += db->stat_key_str_cnt;
+            rockCnt += db->stat_key_str_rockval_cnt;
+        }
+        serverLog(LL_WARNING, "total key cnt = %lld, rock cnt = %lld, percentage = %d",
+                  keyCnt, rockCnt, (int)((long long)100 * rockCnt / keyCnt));
+        return EVICT_ROCK_PERCENTAGE; 
+    }
+
+    if (must_do) {
+        if (used >= server.bunnymem) {
+            mem_tofree = used - server.bunnymem > must_tofree ? used - server.bunnymem : must_tofree;
+        } else {
+            mem_tofree = must_tofree;
+        }
+    } else {
+        serverAssert(used > server.bunnymem);
+        mem_tofree = used - server.bunnymem;
+    }
+
     mem_freed = 0;
     int timeout = 0;
     monotime evictionTimer;
@@ -314,7 +353,7 @@ int performKeyOfStringEvictions(void) {
             keys_freed++;
         } 
 
-        if (elapsedMs(evictionTimer) >= 5) {
+        if (elapsedMs(evictionTimer) >= 2) {        // at most 2-3 ms for eviction
             if (mem_freed < (long long)mem_tofree)
                 timeout = 1;
             break;
@@ -368,7 +407,7 @@ void debugEvictCommand(client *c) {
         serverLog(LL_WARNING, "===== before evcition ===========");
         debugReportMemAndKey();
         serverLog(LL_WARNING, "===== after evcition ===========");
-        int res = performKeyOfStringEvictions();
+        int res = performKeyOfStringEvictions(0, 0);
         serverLog(LL_WARNING, "performKeyOfStringEvictions() res = %s", 
             res == EVICT_ROCK_OK ? "EVICT_ROCK_OK" : 
                                    (res == EVICT_ROCK_PERCENTAGE ? "EVICT_ROCK_PERCENTAGE" : "EVICT_ROCK_TIMEOUT"));
@@ -395,7 +434,7 @@ int checkMemInProcessBuffer(client *c) {
     int out_of_memory = (zmalloc_used_memory() > server.bunnymem);
     if (!out_of_memory) return C_OK;        // memory not over limit
 
-    if (strcasecmp(c->argv[0]->ptr,"quit") == 0) return C_OK;
+    if (strcasecmp(c->argv[0]->ptr, "quit") == 0) return C_OK;
 
     struct redisCommand *cmd = lookupCommand(c->argv[0]->ptr);
     if (!cmd) return C_OK;
@@ -417,4 +456,19 @@ int checkMemInProcessBuffer(client *c) {
     }
     
     return reject_cmd_on_oom ? C_ERR : C_OK;
+}
+
+/* cron job to make some room to avoid the forbidden command due to memory limit */
+#define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
+void cronEvictToMakeRoom() {
+    size_t used_mem = zmalloc_used_memory();
+    size_t limit_mem = server.bunnymem;
+
+    if (limit_mem > used_mem) {
+        if (limit_mem - used_mem >= ENOUGH_MEM_SPACE) return;    
+    }
+
+    if (used_mem * 1000 / limit_mem <= 950) return;       // only over 95%, we start to evict
+
+    performKeyOfStringEvictions(1, 5<<20);      // evict at least 5M bytes
 }

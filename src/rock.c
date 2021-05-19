@@ -1,7 +1,6 @@
 
 #include "server.h"
 #include "rock.h"
-#include "networking.h"
 #include "streamwrite.h"
 
 #include "assert.h"
@@ -14,8 +13,8 @@
 #define ROCK_STRING_TYPE     0           // Rocksdb key is coded as dbid(uint8_t) + byte key of Redis string type
 #define ROCK_HASH_TYPE       1           // Rocksdb key is coded as dbid(uint8_t) + (uint32_t) key_size + byte of key + byte of field
 
-#define ROCK_WRITE_QUEUE_TOO_LONG   4
-#define ROCK_WRITE_PICK_MAX_LEN     16
+#define ROCK_WRITE_QUEUE_TOO_LONG   64
+#define ROCK_WRITE_PICK_MAX_LEN     256
 
 // spin lock only run in Linux
 static pthread_spinlock_t readLock;     
@@ -412,6 +411,29 @@ static void initRocksdb() {
     rocksdb_options_optimize_level_style_compaction(options, 0); 
     // create the DB if it's not already present
     rocksdb_options_set_create_if_missing(options, 1);
+    rocksdb_options_set_write_buffer_size(options, 64<<20);     // 64M memtable size
+    rocksdb_options_set_max_write_buffer_number(options, 2);    // memtable number
+    // WAL
+    // rocksdb_options_set_manual_wal_flush(options, 1);    // current RocksDB API is old
+    // table options
+    rocksdb_options_set_max_open_files(options, -1);        // cache all sst files meta data
+    rocksdb_options_set_table_cache_numshardbits(options, 6);        // shards for table cache
+    rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
+    rocksdb_block_based_options_set_block_size(table_options, 16<<10);
+    rocksdb_block_based_options_set_cache_index_and_filter_blocks(table_options, 0);    // filter in block cache
+    // block cache
+    rocksdb_cache_t *lru_cache = rocksdb_cache_create_lru(32<<20);        // 32M lru cache
+    rocksdb_block_based_options_set_block_cache(table_options, lru_cache);
+    // bloom filter
+    rocksdb_filterpolicy_t *bloom = rocksdb_filterpolicy_create_bloom(10);
+    rocksdb_block_based_options_set_filter_policy(table_options, bloom);
+    // rocksdb_options_set_max_background_jobs(options, 3);     // need invest, maybe mix with rocksdb_options_optimize_level_style_compaction()
+    // compaction
+    rocksdb_options_set_compaction_style(options, rocksdb_universal_compaction);
+    rocksdb_options_set_num_levels(options, 7);   
+    rocksdb_options_set_level0_file_num_compaction_trigger(options, 4);
+
+    rocksdb_options_set_block_based_table_factory(options, table_options);
 
     // open DB
     char *err = NULL;
@@ -420,7 +442,10 @@ static void initRocksdb() {
         serverLog(LL_WARNING, "initRocksdb() failed reason = %s", err);
         exit(1);
     }
-        
+
+    // clean up
+    // rocksdb_filterpolicy_destroy(bloom);   
+    rocksdb_block_based_options_destroy(table_options);    
     rocksdb_options_destroy(options);
 }
 

@@ -9,6 +9,7 @@
 
 int checkMemInProcessBuffer(client *c);
 void debugEvictCommand(client *c);
-int performKeyOfStringEvictions();
+int performKeyOfStringEvictions(int must_do, size_t must_tofree);
+void cronEvictToMakeRoom();
 
 #endif

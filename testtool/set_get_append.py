@@ -15,19 +15,15 @@ def generate_key_vals(key_num, key_prefix):
 
 
 def _main():
-    if len(sys.argv) != 5:
-        print("argument number not correct, use python3 set_get_append.py <ip> <port> <key_num> <key_prefix> ")
+    if len(sys.argv) != 6:
+        print("argument number not correct, use python3 set_get_append.py <ip> <port> <db> <key_num> <key_prefix> ")
         return
 
-    for i, arg in enumerate(sys.argv):
-        if i == 1:
-            ip = str(arg)
-        elif i == 2:
-            port = str(arg)
-        elif i == 3:
-            key_num = int(arg)
-        elif i == 4:
-            key_prefix = str(arg)
+    ip = str(sys.argv[1])
+    port = str(sys.argv[2])
+    db = int(sys.argv[3])
+    key_num = int(sys.argv[4])
+    key_prefix = str(sys.argv[5])
 
     kvs = generate_key_vals(key_num, key_prefix)
 
@@ -35,7 +31,7 @@ def _main():
 
     pool = redis.ConnectionPool(host=ip,
                              port=port,
-                             db=0,
+                             db=db,
                              decode_responses=True,
                              encoding='utf-8',
                              socket_connect_timeout=2)
@@ -76,7 +72,7 @@ def _main():
                 try:
                     r.set(name=k, value=v)
                 except redis.exceptions.ResponseError as e:
-                    print(e)
+                    print(e, time.strftime("%M:%S", time.localtime()))
                     time.sleep(0.1)
         elif dice == 2:
             # for get
@@ -89,7 +85,7 @@ def _main():
             try:
                 r.set(name=key, value=val)
             except redis.exceptions.ResponseError as e:
-                print(e)
+                print(e, time.strftime("%M:%S", time.localtime()))
                 time.sleep(0.1)
         elif dice == 4:
             # for append

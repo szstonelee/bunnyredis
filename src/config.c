@@ -2549,7 +2549,7 @@ standardConfig configs[] = {
 
     /* Unsigned Long Long configs */
     createULongLongConfig("maxmemory", NULL, IMMUTABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
-    createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, 10<<20, ULLONG_MAX, server.bunnymem, 20<<20, MEMORY_CONFIG, NULL, updateBunnymem),
+    createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, 10<<20, ULLONG_MAX, server.bunnymem, 100<<20, MEMORY_CONFIG, NULL, updateBunnymem),
 
     /* Size_t configs */
     createSizeTConfig("hash-max-ziplist-entries", NULL, MODIFIABLE_CONFIG, 0, LONG_MAX, server.hash_max_ziplist_entries, 512, INTEGER_CONFIG, NULL, NULL),

@@ -3,7 +3,6 @@
 #include <librdkafka/rdkafka.h>
 #include <uuid/uuid.h>
 
-#include "networking.h"
 #include "endianconv.h"
 #include "rock.h"
 #include "streamwrite.h"

@@ -4,13 +4,20 @@ NOTE: Linux下，需要设置足够大的open files limit，否则，RocksDB产�
 sudo -i
 vi /etc/security/limits.conf
 // add the following two lines in the limits.conf file
-* hard nofile 97816
-* soft nofile 97816
+* hard nofile 978160
+* soft nofile 978160
 // please remember to logout and login to make the adjustment effect
 // check (before usually 1024, after it will be shown as 97816)
 // do not forget to remove the old RocksDB folder, 
 rm -rf /tmp/bunnyrocksdb
 ulimit -n
+```
+
+```
+./bunny-redis ./redis.conf --nodeid 1
+ ./bunny-redis ./redis.conf --nodeid 2 --port 6380 --rockdbpath /tmp/bunnydb2
+ # check how many open for a user
+lsof -u root | wc -l
 ```
 
 用官网推荐的Kafka C Library, https://docs.confluent.io/platform/current/clients/index.html#, https://github.com/edenhill/librdkafka

@@ -71,14 +71,15 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
             if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
                 updateLFU(val);
             } else {
-                val->lru = LRU_CLOCK();
+                unsigned int clock = LRU_CLOCK();
+                val->lru = clock;
                 dictEntry *lru_de = dictFind(db->key_lrus,key->ptr);
                 if (!lru_de) {
                     serverLog(LL_WARNING, "lookupKey() set lru for key failed, key = %s", (sds)key->ptr);
                     exit(1);
                 }
                 serverAssert(lru_de);
-                lru_de->v.u64 = val->lru;
+                lru_de->v.u64 = clock;
             }
         }
         return val;
