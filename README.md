@@ -20,6 +20,8 @@ ulimit -n
 lsof -u root | wc -l
 ```
 
+Redis memory: add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect
+
 用官网推荐的Kafka C Library, https://docs.confluent.io/platform/current/clients/index.html#, https://github.com/edenhill/librdkafka
 
 NOTE: when start bunny-redis use --nodeid=<distinct node id> or clear the topic in Kafka
@@ -55,6 +57,27 @@ Tip: list special character name and delete it
 ```
 ls -iL -all
 find . -inum <your_inode_number> -delete
+```
+
+RocksDB (from GitHub) install librocksdb.so default to /usr/local/lib and /usr/lcoal/include
+But old one install them to /usr/lib and /usr/include
+So we need to delete the old path and git clone --branch v6.20.3 https://github.com/facebook/rocksdb.git
+Then build with https://github.com/facebook/rocksdb/blob/master/INSTALL.md
+```
+git clone --branch v6.20.3 https://github.com/facebook/rocksdb.git
+make shared_lib
+make install
+```
+
+We need to add LD_LIBRARY_PATH=/usr/local/lib to /etc/environment
+Start a multipass session, check 
+```
+echo LD_LIBRARY_PATH
+```
+
+after build BunnyRedis, check
+```
+ldd bunny-redis
 ```
 
 This README is just a fast *quick start* document. You can find more detailed documentation at [redis.io](https://redis.io).

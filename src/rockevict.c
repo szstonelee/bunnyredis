@@ -470,5 +470,5 @@ void cronEvictToMakeRoom() {
 
     if (used_mem * 1000 / limit_mem <= 950) return;       // only over 95%, we start to evict
 
-    performKeyOfStringEvictions(1, 5<<20);      // evict at least 5M bytes
+    performKeyOfStringEvictions(1, 1<<20);      // evict at least 1M bytes, server.hz set 50, so 1 second call 50 times
 }

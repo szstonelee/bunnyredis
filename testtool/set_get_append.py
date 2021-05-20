@@ -55,6 +55,8 @@ def _main():
     print("inject key finished")
 
     # loop and check
+    cnt = 0
+    timer = time.perf_counter()
     it = iter(kvs)
     while True:
         try:
@@ -99,6 +101,14 @@ def _main():
         else:
             print("no defined dice = " + dice)
             exit(1)
+
+        cnt += 1
+        if cnt == 10000:
+            elapse = time.perf_counter() - timer
+            print("qps = ", (int)(float(cnt)/elapse))
+
+            cnt = 0
+            timer = time.perf_counter()
 
 
 if __name__ == '__main__':

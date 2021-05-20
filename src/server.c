@@ -1137,7 +1137,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @connection",
      0,NULL,0,0,0,0,0,0},
 
-    {"debugrock",NULL,0,debugRockCommand,3,
+    {"debugrock",NULL,0,debugRockCommand,-2,
      "read-only fast @connection",
      0,NULL,0,0,0,0,0,0}
 };

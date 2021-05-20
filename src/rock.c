@@ -14,13 +14,13 @@
 #define ROCK_HASH_TYPE       1           // Rocksdb key is coded as dbid(uint8_t) + (uint32_t) key_size + byte of key + byte of field
 
 #define ROCK_WRITE_QUEUE_TOO_LONG   64
-#define ROCK_WRITE_PICK_MAX_LEN     256
+#define ROCK_WRITE_PICK_MAX_LEN     1024
 
 // spin lock only run in Linux
 static pthread_spinlock_t readLock;     
 static pthread_spinlock_t writeLock;
 
-rocksdb_t *rockdb;
+rocksdb_t *rockdb = NULL;
 // const char bunny_rockdb_path[] = "/tmp/bunnyrocksdb";
 
 struct WriteTask {
@@ -100,10 +100,46 @@ static void unlockRockWrite() {
     serverAssert(res == 0);
 }
 
+// reference https://github.com/facebook/rocksdb/wiki/Memory-usage-in-RocksDB
+static void report_rocksdb_mem_usage() {
+    if (!rockdb) return;
+
+    char* info;
+
+    info = rocksdb_property_value(rockdb, "rocksdb.block-cache-usage");
+    if (info) {
+        serverLog(LL_NOTICE, "rocksdb.block-cache-usage = %s", info);
+        zlibc_free(info);
+    }
+
+    info = rocksdb_property_value(rockdb, "rocksdb.estimate-table-readers-mem");
+    if (info) {
+        serverLog(LL_NOTICE, "rocksdb.estimate-table-readers-mem = %s", info);
+        zlibc_free(info);
+    }
+
+    info = rocksdb_property_value(rockdb, "rocksdb.cur-size-all-mem-tables");
+    if (info) {
+        serverLog(LL_NOTICE, "rocksdb.cur-size-all-mem-tables = %s", info);
+        zlibc_free(info);
+    }
+
+    info = rocksdb_property_value(rockdb, "rocksdb.block-cache-pinned-usage");
+    if (info) {
+        serverLog(LL_NOTICE, "rocksdb.block-cache-pinned-usage = %s", info);
+        zlibc_free(info);
+    }
+}
+
 void debugRockCommand(client *c) {
     sds flag = c->argv[1]->ptr;
 
     if (strcasecmp(flag, "set") == 0) {
+        if (c->argc != 3) {
+            addReplyError(c, "debugrock set <key_name>");
+            return;
+        }
+
         robj *key = c->argv[2];
         dictEntry *de = dictFind(c->db->dict, key->ptr);
         if (!de) {
@@ -125,6 +161,8 @@ void debugRockCommand(client *c) {
         ++c->db->stat_key_str_rockval_cnt;
         addRockWriteTaskOfString(c->db->id, key->ptr, val->ptr);
         decrRefCount(val);
+    } else if (strcasecmp(flag, "mem") == 0) {
+        report_rocksdb_mem_usage();
     } else {
         addReplyError(c, "wrong flag for debugrock!");
         return;
@@ -400,8 +438,10 @@ static int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, str
 }
 
 static void initRocksdb() {
+    serverLog(LL_NOTICE, "start to delete old RocksDB folder in %s ...", server.bunny_rockdb_path);
     // We need to remove the whole RocksDB folder like rm -rf <rocksdb_folder>
     nftw(server.bunny_rockdb_path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
+    serverLog(LL_NOTICE, "finish removal of the whole folder of %s", server.bunny_rockdb_path);
 
     long cpus = sysconf(_SC_NPROCESSORS_ONLN);
     rocksdb_options_t *options = rocksdb_options_create();
@@ -411,27 +451,41 @@ static void initRocksdb() {
     rocksdb_options_optimize_level_style_compaction(options, 0); 
     // create the DB if it's not already present
     rocksdb_options_set_create_if_missing(options, 1);
-    rocksdb_options_set_write_buffer_size(options, 64<<20);     // 64M memtable size
-    rocksdb_options_set_max_write_buffer_number(options, 2);    // memtable number
+    // file size
+    rocksdb_options_set_target_file_size_base(options, 4<<20);
+    // memtable
+    rocksdb_options_set_write_buffer_size(options, 32<<20);     // 32M memtable size
+    rocksdb_options_set_max_write_buffer_number(options, 4);    // memtable number
     // WAL
-    // rocksdb_options_set_manual_wal_flush(options, 1);    // current RocksDB API is old
-    // table options
-    rocksdb_options_set_max_open_files(options, -1);        // cache all sst files meta data
-    rocksdb_options_set_table_cache_numshardbits(options, 6);        // shards for table cache
-    rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
-    rocksdb_block_based_options_set_block_size(table_options, 16<<10);
-    rocksdb_block_based_options_set_cache_index_and_filter_blocks(table_options, 0);    // filter in block cache
-    // block cache
-    rocksdb_cache_t *lru_cache = rocksdb_cache_create_lru(32<<20);        // 32M lru cache
-    rocksdb_block_based_options_set_block_cache(table_options, lru_cache);
-    // bloom filter
-    rocksdb_filterpolicy_t *bloom = rocksdb_filterpolicy_create_bloom(10);
-    rocksdb_block_based_options_set_filter_policy(table_options, bloom);
-    // rocksdb_options_set_max_background_jobs(options, 3);     // need invest, maybe mix with rocksdb_options_optimize_level_style_compaction()
+    // rocksdb_options_set_manual_wal_flush(options, 1);    // current RocksDB API 6.20.3 not support
     // compaction
     rocksdb_options_set_compaction_style(options, rocksdb_universal_compaction);
     rocksdb_options_set_num_levels(options, 7);   
     rocksdb_options_set_level0_file_num_compaction_trigger(options, 4);
+    // table options
+    rocksdb_options_set_max_open_files(options, 1024);      // if default is -1, no limit, and too many open files consume memory
+    rocksdb_options_set_table_cache_numshardbits(options, 4);        // shards for table cache
+    rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
+    rocksdb_block_based_options_set_block_size(table_options, 8<<10);
+    // cache
+    rocksdb_cache_t *lru_cache = rocksdb_cache_create_lru(128<<20);        // 128M lru cache
+    rocksdb_block_based_options_set_block_cache(table_options, lru_cache);
+    // index in cache and partitioned index filter (https://github.com/facebook/rocksdb/wiki/Partitioned-Index-Filters)
+    rocksdb_block_based_options_set_index_type(table_options, rocksdb_block_based_table_index_type_two_level_index_search);
+    rocksdb_block_based_options_set_partition_filters(table_options, 1);
+    rocksdb_block_based_options_set_metadata_block_size(table_options, 4<<10);
+    // filter and index in block cache to save memory
+    rocksdb_block_based_options_set_cache_index_and_filter_blocks(table_options, 1);    
+    rocksdb_block_based_options_set_pin_top_level_index_and_filter(table_options, 1);
+    rocksdb_block_based_options_set_cache_index_and_filter_blocks_with_high_priority(table_options, 1);
+    // NOTE: we use universal compaction, so not set pin_l0_filter_and_index_blocks_in_cache
+    // rocksdb_block_based_options_set_pin_l0_filter_and_index_blocks_in_cache(table_options, 1);
+
+    // bloom filter
+    rocksdb_filterpolicy_t *bloom = rocksdb_filterpolicy_create_bloom_full(10);
+    rocksdb_block_based_options_set_filter_policy(table_options, bloom);
+    // need invest, maybe mix with rocksdb_options_optimize_level_style_compaction()
+    // rocksdb_options_set_max_background_jobs(options, 3);     
 
     rocksdb_options_set_block_based_table_factory(options, table_options);
 
@@ -445,6 +499,7 @@ static void initRocksdb() {
 
     // clean up
     // rocksdb_filterpolicy_destroy(bloom);   
+    rocksdb_cache_destroy(lru_cache);
     rocksdb_block_based_options_destroy(table_options);    
     rocksdb_options_destroy(options);
 }
@@ -603,7 +658,7 @@ static void doReadTasksInReadThread(const size_t task_cnt, sds const* const task
                       (const char* const *)rockdb_keys, rockdb_key_sizes, rockdb_vals, rockdb_val_sizes, errs);
     rocksdb_readoptions_destroy(readoptions);
 
-    // Join values from write_quee and RocksDB
+    // Join values from write_queue and RocksDB
     for (size_t i = 0; i < rockdb_read_cnt; ++i) {
         if (errs[i]) {
             serverLog(LL_WARNING, "doReadTasksInReadThread() reading from RocksDB failed, err = %s, key = %s",
@@ -620,7 +675,7 @@ static void doReadTasksInReadThread(const size_t task_cnt, sds const* const task
             // We need sds in vals, not char* from RocksDB API. 
             // So we copy it. The vals will be transfered to on_fly_vals and be reclained in rockReadSignalHandler()
             vals[index] = sdsnewlen(rockdb_vals[i], rockdb_val_sizes[i]);
-            // free the malloc() resource made by RocksDB API of rocksdb_multi_get()
+            // free the malloc()ed resource made by RocksDB API of rocksdb_multi_get()
             zlibc_free(rockdb_vals[i]);       
         }
     }
