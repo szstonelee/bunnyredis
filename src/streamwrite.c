@@ -22,8 +22,10 @@ static int kafkaReadyAndTopicCorrect = 0;   // producer start for check kafka st
 static const char *bootstrapBrokers = "127.0.0.1:9092,";
 static const char *bunnyRedisTopic = "redisStreamWrite"; 
 
-list* sndMsgs;  // producer and main thread contented data
-list* rcvMsgs;  // consumer and main thread contented data
+static list* sndMsgs;  // producer and main thread contented data
+static list* rcvMsgs;  // consumer and main thread contented data
+
+static sds sds_exec;    // global variable which is "exec" string
 
 static void lockConsumerData() {
     int res = pthread_spin_lock(&consumerLock);
@@ -49,10 +51,9 @@ static void freeArgAsSdsString(void *arg) {
     sdsfree(arg);
 }
 
-/* Main thread call this to add command to sndMsgs 
- * We think every parameter (including command name) stored in client argv is String Object */
-static void addCommandToStreamWrite(client *c) {
-    // serialize the command
+static sds marshall_for_no_exec(client *c) {
+    serverAssert(strcasecmp(c->argv[0]->ptr, "exec") != 0);
+
     // node id
     uint8_t node_id = (uint8_t)server.node_id;
     sds buf = sdsnewlen(&node_id, sizeof(node_id));
@@ -78,14 +79,72 @@ static void addCommandToStreamWrite(client *c) {
         buf = sdscatlen(buf, c->argv[i]->ptr, sdslen(c->argv[i]->ptr));
     } 
 
+    return buf;
+}
+
+// referece multi.c execCommand()
+static sds marshall_for_exec(client *c) {
+    serverAssert(strcasecmp(c->argv[0]->ptr, "exec") == 0);
+
+    // node id
+    uint8_t node_id = (uint8_t)server.node_id;
+    sds buf = sdsnewlen(&node_id, sizeof(node_id));
+    // client id
+    uint64_t client_id = intrev64ifbe(c->id);
+    buf = sdscatlen(buf, &client_id, sizeof(client_id));
+    // db id
+    uint8_t dbid = (uint8_t)c->db->id;
+    buf = sdscatlen(buf, &dbid, sizeof(dbid));
+    // command name
+    serverAssert(c->argv[0]->encoding == OBJ_ENCODING_RAW || c->argv[0]->encoding == OBJ_ENCODING_EMBSTR);
+    // right now Redis commands name is less than 255, check https://redis.io/commands
+    serverAssert(sdslen(c->argv[0]->ptr) <= UINT8_MAX);     
+    uint8_t cmd_len = 4;
+    buf = sdscatlen(buf, &cmd_len, sizeof(cmd_len));
+    buf = sdscatlen(buf, "exec", 4);
+    // other arguments for multi commands in transaction
+    serverAssert(c->mstate.count > 0);
+    for (int i = 0; i < c->mstate.count; ++i) {
+        // command name
+        struct redisCommand *each_cmd = c->mstate.commands[i].cmd;
+        uint8_t each_cmd_len = strlen(each_cmd->name);
+        buf = sdscatlen(buf, &each_cmd_len, sizeof(each_cmd_len));
+        buf = sdscatlen(buf, each_cmd->name, each_cmd_len);
+        // args number (exclude command itself)
+        serverAssert(c->mstate.commands[i].argc > 0);
+        uint32_t each_args_num = intrev32ifbe(c->mstate.commands[i].argc - 1);
+        buf = sdscatlen(buf, &each_args_num, sizeof(each_args_num));
+        // each arg
+        for (size_t j = 0; j < each_args_num; ++j) {
+            robj *each_arg = c->mstate.commands[i].argv[j+1];
+            uint32_t each_arg_len = intrev32ifbe(sdslen(each_arg->ptr));
+            buf = sdscatlen(buf, &each_arg_len, sizeof(each_arg_len));
+            buf = sdscatlen(buf, each_arg->ptr, sdslen(each_arg->ptr));
+        }
+    }
+
+    return buf;
+}
+
+/* Main thread call this to add command to sndMsgs 
+ * We think every parameter (including command name) stored in client argv is String Object */
+static void addCommandToStreamWrite(client *c) {
+    // serialize the command
+    sds buf;
+    if (c->flags & CLIENT_MULTI) {
+        buf = marshall_for_exec(c);
+    } else {
+        buf = marshall_for_no_exec(c);
+    }
+
     lockProducerData();
     listAddNodeTail(sndMsgs, buf);
     unlockProducerData();
 }
 
 /* C_OK, succesfully, C_ERR, failed */
-int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid, 
-              sds *command, list **args) {
+static int parse_msg_for_no_exec(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid, 
+                                 sds *command, list **args) {
     size_t msg_len = sdslen(msg);
     size_t cnt = 0;
     char *p = msg;
@@ -118,7 +177,7 @@ int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid,
     *command = sdsnewlen(p, cmd_len);
     p += cmd_len;
 
-    //  other arguments
+    // other arguments for no-exec commad
     *args = listCreate();
     while (cnt < msg_len) {
         uint32_t arg_len = intrev32ifbe(*((uint32_t*)p));
@@ -139,6 +198,95 @@ int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid,
     return C_OK;
 }
 
+/* C_OK, succesfully, C_ERR, failed 
+ * cmds is transaction commands in transaction, a list of sds
+ * args is arguments which exclude the command name for each transaction command, a list of list of sds
+ * the length of cmds is equal to the one of args. for the list of args for one command, it could be NULL 
+ * NOTE: the length of cmds must be greater than 0, i.e., We do not accept empty transaction 
+ * Reference marshall_for_exec() for encoding format */
+static int parse_msg_for_exec(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid, 
+                              list **cmds, list **args) {
+    size_t msg_len = sdslen(msg);
+    size_t cnt = 0;
+    char *p = msg;
+
+    // node id
+    *node_id = *((uint8_t*)p);
+    cnt += sizeof(*node_id);
+    p += sizeof(*node_id);
+    if (cnt > msg_len) return C_ERR;
+
+    // client id
+    *client_id = intrev64ifbe(*((uint64_t*)p));
+    cnt += sizeof(*client_id);
+    p += sizeof(*client_id);
+    if (cnt > msg_len) return C_ERR;
+
+    // db id
+    *dbid = *((uint8_t*)p);
+    cnt += sizeof(*dbid);
+    p += sizeof(*dbid);
+    if (cnt > msg_len) return C_ERR;
+
+    // command name must be "exec"
+    serverAssert(*((uint8_t*)p) == 4);
+    cnt += 5;
+    p += 5;
+    if (cnt > msg_len) return C_ERR;
+
+    // other commands and arguments for exec commad
+    list *tran_cmds = listCreate();
+    list *tran_args = listCreate();
+
+    serverAssert(cnt != msg_len);
+    while (cnt < msg_len) {
+        // transaction command name
+        uint8_t tran_cmd_len = *((uint8_t*)p);
+        cnt += sizeof(tran_cmd_len);
+        p += sizeof(tran_cmd_len);
+        if (cnt > msg_len) return C_ERR;
+
+        sds tran_cmd = sdsnewlen(p, tran_cmd_len);
+        cnt += tran_cmd_len;
+        p += tran_cmd_len;
+        if (cnt > msg_len) return C_ERR;
+        listAddNodeTail(tran_cmds, tran_cmd);
+
+        // all args for each transaction command
+        list *each_cmd_args = NULL;
+
+        uint32_t each_cmd_arg_num = intrev32ifbe(*((uint32_t*)p));
+        cnt += sizeof(each_cmd_arg_num);
+        p += sizeof(each_cmd_arg_num);
+        if (cnt > msg_len) return C_ERR;
+
+        if (each_cmd_arg_num) {
+            each_cmd_args = listCreate();
+            for (size_t i = 0; i < each_cmd_arg_num; ++i) {
+                uint32_t each_arg_len = intrev32ifbe(*((uint32_t*)p));
+                cnt += sizeof(each_arg_len);
+                p += sizeof(each_arg_len);
+                if (cnt > msg_len) return C_ERR;
+                sds each_cmd_arg = sdsnewlen(p, each_arg_len);
+                cnt += each_arg_len;
+                p += each_arg_len;
+                if (cnt > msg_len) return C_ERR;
+                listAddNodeTail(each_cmd_args, each_cmd_arg);
+            }
+        }
+
+        listAddNodeTail(tran_args, each_cmd_args);
+    }
+
+    if (cnt != msg_len) {
+        return C_ERR;
+    } else {
+        *cmds = tran_cmds;
+        *args = tran_args;
+        return C_OK;   
+    } 
+}
+
 /* What is a virtual client ? 
  * please reference scripting.c
  * We create a virtual client which will execute a command in the virtual client context
@@ -146,13 +294,21 @@ int parse_msg(sds msg, uint8_t *node_id, uint64_t *client_id, uint8_t *dbid,
  * the client in the node which issue a streamwrite comand then the connection is broken in asyinc mode */
 
 /* reference server.c processCommand()
- * return C_ERR if the command check failed (and will exec without data modification but reply error info) 
- *        or the command is "quit" COMMAND, 
- *        so the client can go on to reply fail info to real client or execute QUIT command
- * return C_OK, the commmand check ok. 
- *        If the command is in the stream catagory which needs to be streamed, 
- *        it will set  STREAM_WRITE_WAITING for concrete client
- *        but the caller need to check c->streamWritng */
+ * return C_ERR for four cases
+ *        1. the command is "quit" COMMAND.
+ *        2. if the command check failed (and will exec without data modification but reply error info) 
+ *        3. the client in MULTI state and not "exec", so it can be queud
+ *        4. the client in MULTI state and "exec" but CLIENT_DIRTY_EXEC
+ * If C_ERR, the caller can goes on to reply info to client, check networking.c processInputBuffer()
+ * 
+ * return C_OK for three cases
+ *        1. The command is in the stream catagory which needs to be streamed, 
+ *           it will set  STREAM_WRITE_WAITING for concrete client
+ *           but the caller need to check c->streamWritng
+ *        2. the client is in MULTI state, and the command is "exec". 
+ *           Acturally, it is a special case for 1
+ *        3. The command is not in stream catgory, read commands or forbidden commands
+ * If C_OK, the caller needs to chck STREAM_WRITE_WAITING and Rock keys */
 int checkAndSetStreamWriting(client *c) {
     serverAssert(c->streamWriting == STREAM_WRITE_INIT);
 
@@ -215,6 +371,26 @@ int checkAndSetStreamWriting(client *c) {
         return C_ERR;        
     }
 
+    if ((c->flags & CLIENT_MULTI)) {
+        int return_c_err = 0;
+
+        if (cmd->proc != execCommand) {
+            return_c_err = 1;       // command could be queued
+        } else { 
+            if ((c->flags & CLIENT_DIRTY_EXEC)) {
+                return_c_err = 1;       // exec will fail because of CLIENT_DIRTY_EXEC
+            } else if (c->mstate.count == 0) {
+                return_c_err = 1;       // empty transaction, i.e., MULTI then EXEC
+            }
+        }
+
+        if (return_c_err) {
+            c->cmd = savedCmd;
+            c->lastcmd = savedLastcmd;
+            return C_ERR;
+        }
+    }
+
     if (cmd->streamCmdCategory == STREAM_ENABLED_CMD && c != server.virtual_client)
         c->streamWriting = STREAM_WRITE_WAITING;    // we set STREAM_WRITE_WAITING for the caller
 
@@ -233,7 +409,7 @@ int checkAndSetStreamWriting(client *c) {
  * so it can call execVritualCommand() directly later 
  * args is not like c->args, it exclude the first command name 
  * and it is based on sds string not robj* */
-static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
+static void setVirtualClinetContextForNoTransaction(uint8_t dbid, sds command, list *args) {
     // setVirtualClinetContext() is not reentry if not called freeVirtualClientContext() before (or init)
     serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);        
 
@@ -268,6 +444,126 @@ static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
     serverAssert(acl_retval == ACL_OK);
 }
 
+/* function like the above setVirtualClinetContextForTransaction() but it is called from 
+ * So we can use the resource from concrete resource */
+static void setVirtualClinetContextForNoTransactionFromConcrete(client *concrete) {
+    serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);
+
+    client *virtual = server.virtual_client;
+    int select_res = selectDb(virtual, concrete->db->id);
+    serverAssert(select_res == C_OK);
+
+    virtual->argc = concrete->argc;
+    virtual->argv = zmalloc(sizeof(robj*)*concrete->argc);
+    for (int i = 0; i < concrete->argc; ++i) {
+        robj *o = concrete->argv[i];
+        virtual->argv[i] = o;
+        incrRefCount(o);
+    }
+    virtual->cmd = virtual->lastcmd = concrete->cmd;
+}
+
+static void setVirtualClinetContextForTransaction(uint8_t dbid, list *cmds, list *args) {
+    // setVirtualClinetContext() is not reentry if not called freeVirtualClientContext() before (or init)
+    serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);        
+
+    client *c = server.virtual_client;
+
+    int select_res = selectDb(c, dbid);
+    serverAssert(select_res == C_OK);
+
+    c->flags |= CLIENT_MULTI;
+
+    c->argc = 1;
+    c->argv = zmalloc(sizeof(robj*));
+    c->argv[0] = createStringObject(sds_exec, sdslen(sds_exec));
+    
+    struct redisCommand *cmd;
+    cmd = lookupCommand(sds_exec);
+    c->cmd = c->lastcmd = cmd;
+
+    // for transaction context, refrerence multi.c queueMultiCommand()
+    serverAssert(listLength(cmds) == listLength(args));
+    size_t multi_cmd_len = listLength(cmds);
+    c->mstate.commands = zmalloc(sizeof(multiCmd)*multi_cmd_len);
+    listIter li_each_cmd;
+    listNode *ln_each_cmd;
+    listIter li_each_args;
+    listNode *ln_each_args;
+    listRewind(cmds, &li_each_cmd);
+    listRewind(args, &li_each_args);
+    for (size_t i = 0; i < multi_cmd_len; ++i) {
+        ln_each_cmd = listNext(&li_each_cmd);
+        ln_each_args = listNext(&li_each_args);
+        serverAssert(ln_each_cmd && ln_each_args);
+
+        sds each_cmd_sds = listNodeValue(ln_each_cmd);
+        struct redisCommand *redis_cmd = lookupCommand(each_cmd_sds);
+        serverAssert(redis_cmd);
+        list *each_args = listNodeValue(ln_each_args);
+        serverAssert(each_cmd_sds);
+
+        multiCmd *mc = c->mstate.commands+i;
+        mc->argc = 1 + (each_args ? 0 : listLength(each_args));
+        mc->cmd = redis_cmd;
+        mc->argv = zmalloc(sizeof(robj*)*mc->argc);
+        mc->argv[0] = createStringObject(each_cmd_sds, sdslen(each_cmd_sds));
+        if (each_args) {
+            size_t index = 1;
+            listIter li;
+            listNode *ln;
+            listRewind(each_args, &li);
+            while ((ln = listNext(&li))) {
+                sds arg = listNodeValue(ln);
+                serverAssert(arg);
+                mc->argv[index] = createStringObject(arg, sdslen(arg));
+                ++index;
+            }
+        }
+    }
+    c->mstate.count = multi_cmd_len;
+}
+
+static void setVirtualClinetContextForTransactionFromConcrete(client *concrete) {
+    serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);  
+
+    client *virtual = server.virtual_client;
+
+    int select_res = selectDb(virtual, concrete->db->id);
+    serverAssert(select_res == C_OK);
+
+    virtual->flags |= CLIENT_MULTI;
+
+    serverAssert(concrete->argc == 0);
+    virtual->argc = 1;
+    virtual->argv = zmalloc(sizeof(robj*));
+    robj *exec_cmd = concrete->argv[0];
+    virtual->argv[0] = exec_cmd;
+    incrRefCount(exec_cmd);
+
+    struct redisCommand *redis_exec;
+    redis_exec = lookupCommand(sds_exec);
+    virtual->cmd = virtual->lastcmd = redis_exec;
+   
+    // mstate
+    serverAssert(concrete->mstate.count > 0);
+    virtual->mstate.commands = zmalloc(sizeof(multiCmd)*concrete->mstate.count);
+    for (int i = 0; i < concrete->mstate.count; ++i) {
+        multiCmd *mc_virtual = virtual->mstate.commands + i;
+        multiCmd *mc_concrete = concrete->mstate.commands + i;
+
+        mc_virtual->argc = mc_concrete->argc;
+        mc_virtual->cmd = mc_concrete->cmd;
+        mc_virtual->argv = zmalloc(sizeof(robj*)*mc_concrete->argc);
+        for (int j = 0; j < mc_concrete->argc; ++i) {
+            robj *o = mc_concrete->argv[j];
+            mc_virtual->argv[j] = o;
+            incrRefCount(o);
+        }
+    }
+    virtual->mstate.count = concrete->mstate.count;
+}
+
 /* when concreate client is destroyed and we find that the client is the current stream client, 
  * we need to transfer its context to virtual context.
  * Check network.c freeClient() for more details 
@@ -277,7 +573,8 @@ static void setVirtualClinetContext(uint8_t dbid, sds command, list *args) {
 void setVirtualContextFromConcreteClient(client *concrete) {
     serverAssert(concrete != server.virtual_client);
     serverAssert(server.streamCurrentClientId == concrete->id);
-    serverAssert(server.virtual_client->argv == NULL);
+    // virtual_client right now is zero, i.e., not used by anyone
+    serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);  
     serverAssert(concrete->argc > 0);
     serverAssert(concrete->streamWriting == STREAM_WRITE_WAITING || concrete->streamWriting == STREAM_WRITE_FINISH);
 
@@ -293,22 +590,18 @@ void setVirtualContextFromConcreteClient(client *concrete) {
     // *** server.streamCurrentClientId = VIRTUAL_CLIENT_ID; ***
 
     serverAssert(concrete->db->id >= 0 && concrete->db->id < server.dbnum);
-    uint8_t dbid = (uint8_t)concrete->db->id;
-    sds command = concrete->argv[0]->ptr;
+    // uint8_t dbid = (uint8_t)concrete->db->id;
 
-    list *args = listCreate();
-    for (int i = 1; i < concrete->argc; ++i) {
-        sds arg = sdsnewlen(concrete->argv[i]->ptr, sdslen(concrete->argv[i]->ptr));
-        listAddNodeTail(args, arg);
+    if (concrete->mstate.count == 0) {
+        setVirtualClinetContextForNoTransactionFromConcrete(concrete);
+    } else {
+        serverAssert(strcasecmp(concrete->argv[0]->ptr, "exec") == 0);
+
+        setVirtualClinetContextForTransactionFromConcrete(concrete);
     }
 
-    setVirtualClinetContext(dbid, command, args);
-                       
-    server.virtual_client->rockKeyNumber = concrete->rockKeyNumber;     // do not forget to set the rockyNumber
-
-    // clean up
-    listSetFreeMethod(args, freeArgAsSdsString);
-    listRelease(args);
+    // do not forget to set the rockyNumber
+    server.virtual_client->rockKeyNumber = concrete->rockKeyNumber;     
 }
 
 static void freeVirtualClientContext() {
@@ -332,6 +625,12 @@ static void freeVirtualClientContext() {
     c->argv = NULL;
 
     c->cmd = c->lastcmd = NULL;
+
+    // reference multi.c freeClientMultiState()
+    // NOTE: need to invest c->mstate.cmd_flags & cmd_inv_flags;
+    freeClientMultiState(c);
+    c->mstate.count = 0;
+    c->mstate.commands = NULL;
 }
 
 /* reference scripting.c luaRedisGenericCommand
@@ -570,8 +869,8 @@ void initKafkaProducer() {
 
 /* main thread will deal each commmand with a streamWrite message here 
  * all parameters are parsed from the strem write message */
-static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
-                                            sds command, list *args) {
+static client *processNoExecCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
+                                                  sds command, list *args) {
     serverAssert(server.streamCurrentClientId == NO_STREAM_CLIENT_ID);
 
     // server.streamCurrentClientId is changed first only here
@@ -600,7 +899,7 @@ static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id,
             processCommandAndResetClient(c);        
 
     } else {
-        setVirtualClinetContext(dbid, command, args);
+        setVirtualClinetContextForNoTransaction(dbid, command, args);
         checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase 
         if (c->rockKeyNumber == 0)
             // resume the execution of virtual client and clear server.streamCurrentClient
@@ -615,6 +914,66 @@ static client *processCommandForStreamWrite(uint8_t node_id, uint64_t client_id,
     return c;
 }
 
+static client* processExecCommandForStreamWrite(uint8_t node_id, uint64_t client_id, uint8_t dbid,
+                                                list *cmds, list *args) {
+    serverAssert(server.streamCurrentClientId == NO_STREAM_CLIENT_ID);
+
+    client *c = server.virtual_client;
+    if (node_id == server.node_id) {
+        dictEntry *de = dictFind(server.clientIdTable, (const void*)client_id);
+        if (de) c = dictGetVal(de);     // found the concrete client
+    }
+    server.streamCurrentClientId = c->id;   // NOTE: could be concrete client id or vritual client id
+
+    if (c != server.virtual_client) {
+        serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
+        serverAssert(strcasecmp(c->argv[0]->ptr, "exec") == 0);
+        serverAssert((size_t)c->argc == 1 + listLength(args));
+
+        c->streamWriting = STREAM_WRITE_FINISH;
+        int is_stream_write = (c->id == server.streamCurrentClientId);
+        checkAndSetRockKeyNumber(c, is_stream_write);        // after the stream phase, we can goon to rock phase
+        if (c->rockKeyNumber == 0)
+            // resume the excecution of concrete client and clear server.streamCurrentClient
+            processCommandAndResetClient(c);        
+
+    } else {
+        setVirtualClinetContextForTransaction(dbid, cmds, args);
+        checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase 
+        if (c->rockKeyNumber == 0)
+            // resume the execution of virtual client and clear server.streamCurrentClient
+            execVirtualCommand();       
+    }
+
+    // clean up for cmds and args
+    listSetFreeMethod(cmds, freeArgAsSdsString);
+    listRelease(cmds);
+
+    listIter li;
+    listNode *ln;
+    while ((ln = listNext(&li))) {
+        list *each_args = listNodeValue(ln);
+        if (each_args) {        // NOTE: could be NULL for each_args
+            listSetFreeMethod(each_args, freeArgAsSdsString);
+            listRelease(each_args);
+        }
+    }
+    listRelease(args);
+
+    return c;
+}
+
+static int check_exec_msg(sds msg) {
+    // node id + client id + dbid + command len
+    size_t offset = sizeof(uint8_t) + sizeof(uint64_t) + sizeof(uint8_t) + sizeof(uint8_t);
+    
+    if (sdslen(msg) < offset + 4)
+        return 0;
+
+    size_t cmd_len = msg[offset-1];
+    return cmd_len == 4 && msg[offset] == 'e' && msg[offset+1] == 'x' && msg[offset+2] == 'e' && msg[offset+3] == 'c';
+}
+
 /* When the concrete client finished a stream write command in network.c processCommandAndResetClient()
  * or the virtual client finished a stream write command in execVirtualCommand(),
  * or just the main thread got a message from stream write in streamConsumerSignalHandler()
@@ -625,6 +984,19 @@ void try_to_execute_stream_commands() {
     // if there is a stream write unfinished, just return
     if (server.streamCurrentClientId != NO_STREAM_CLIENT_ID) return;
 
+    listIter msg_li;
+    listNode *msg_ln;
+    sds msg;
+    uint8_t node_id;
+    uint64_t client_id;
+    uint8_t dbid;
+    sds command;
+    list *no_exec_args;
+    client *c;
+
+    list *exec_cmds;
+    list *exec_args;
+
     while (1) {
         lockConsumerData();
 
@@ -633,23 +1005,22 @@ void try_to_execute_stream_commands() {
             break;     // no message to deal with
         }
 
-        listIter msg_li;
-        listNode *msg_ln;
-
         listRewind(rcvMsgs, &msg_li);
         msg_ln = listNext(&msg_li);
         serverAssert(msg_ln);
-        sds msg = listNodeValue(msg_ln);
+        msg = listNodeValue(msg_ln);
 
-        uint8_t node_id;
-        uint64_t client_id;
-        uint8_t dbid;
-        sds command;
-        list *args;
+        int is_exec_msg = check_exec_msg(msg);
 
-        // NOTE: parse_msg will allocate memory resource for command and args
-        int ret = parse_msg(msg, &node_id, &client_id, &dbid, &command, &args);
-        if (ret != C_OK) {
+        int parse_ret;
+        if (!is_exec_msg) {
+            // NOTE: parse_msg will allocate memory resource for command and no_exec_args
+            parse_ret = parse_msg_for_no_exec(msg, &node_id, &client_id, &dbid, &command, &no_exec_args);
+        } else {
+            // NOTE: will allocate memory fro exec_cmds and exec_args
+            parse_ret = parse_msg_for_exec(msg, &node_id, &client_id, &dbid, &exec_cmds, &exec_args);
+        }
+        if (parse_ret != C_OK) {
             serverLog(LL_WARNING, "fatel error for parse message!");
             exit(1);
         }
@@ -660,10 +1031,14 @@ void try_to_execute_stream_commands() {
 
         unlockConsumerData();     
 
-        // NOTE1: command and args will be cleared
-        // NOTE2: processCommandForStreamWrite() maybe call back, so we need it out of lock 
-        //        to aovid lock reentry.
-        client *c = processCommandForStreamWrite(node_id, client_id, dbid, command, args);
+        // NOTE1: The allocated resource of command and args will be cleared
+        // NOTE2: processNoExecCommandForStreamWrite() or processExecCommandForStreamWrite() 
+        //        maybe call back, so we need it out of lock to aovid lock reentry.
+        if (!is_exec_msg) {
+            c = processNoExecCommandForStreamWrite(node_id, client_id, dbid, command, no_exec_args);
+        } else {
+            c = processExecCommandForStreamWrite(node_id, client_id, dbid, exec_cmds, exec_args);
+        }
 
         // if current stream client id is not finished, we need break
         if (server.streamCurrentClientId != NO_STREAM_CLIENT_ID) break;
@@ -785,6 +1160,8 @@ static void* entryInConsumerThread(void *arg) {
  * it will write it to buffer (sync by spin lock) then notify main thread by pipe 
  * because main thread maybe sleep in eventloop for events comming */
 void initStreamPipeAndStartConsumer() {
+    sds_exec = sdsnewlen("exec", 4);        // init gloabl constant string for command "exec"
+
     pthread_t consumer_thread;
     int pipefds[2];
 

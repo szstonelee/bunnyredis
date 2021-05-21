@@ -875,11 +875,13 @@ struct redisCommand redisCommandTable[] = {
      "pub-sub ok-loading ok-stale random",
      0,NULL,0,0,0,0,0,0},
 
-    {"watch",NULL,0,watchCommand,-2,
+    // does not support watch for BunnyRedis
+    {"watch",NULL,-1,watchCommand,-2,
      "no-script fast ok-loading ok-stale @transaction",
      0,NULL,1,-1,1,0,0,0},
 
-    {"unwatch",NULL,0,unwatchCommand,1,
+    // does not support watch for BunnyRedis
+    {"unwatch",NULL,-1,unwatchCommand,1,
      "no-script fast ok-loading ok-stale @transaction",
      0,NULL,0,0,0,0,0,0},
 
@@ -4105,6 +4107,7 @@ int processCommand(client *c) {
         return C_OK;
     }
 
+    /* We check forbidden command for BunnyRedis here */
     if (c->cmd->streamCmdCategory == STREAM_FORBIDDEN_CMD) {
         rejectCommandFormat(c,"BunnyRedis forbids '%s' command",
             c->cmd->name);
@@ -4495,7 +4498,8 @@ int prepareForShutdown(int flags) {
         server.sentinel_mode ? "Sentinel" : "Redis");
 
     serverLog(LL_NOTICE, "close rocksdb in %s",getRockdbPath());
-    closeRockdb();
+    // We do not need waste time to close db
+    // closeRockdb();
 
     return C_OK;
 }

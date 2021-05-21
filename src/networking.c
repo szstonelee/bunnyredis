@@ -1348,6 +1348,9 @@ void freeClient(client *c) {
     //       freeClientAsync() may be some issues but right now it is for Debug and LUA which we does not support
     if (server.clientIdTable) {
         if (c->id == server.streamCurrentClientId) {
+            // This condition c->id == server.streamCurrentClientId means we have already finish stream phase
+            // which set server.streamCurrentClientId in processNoExecCommandForStreamWrite() or processExecCommandForStreamWrite)
+            // by caller try_to_execute_stream_commands()
             // we need to switch concrete c to virtual client if c is current stream client
             setVirtualContextFromConcreteClient(c);
         }
@@ -2171,15 +2174,15 @@ void processInputBuffer(client *c) {
             }
 
             // check and set streamWriting
-            int check_stream_res = checkAndSetStreamWriting(c);
-            if (check_stream_res == C_OK && c->streamWriting == STREAM_WRITE_WAITING)
-                break;
-
             // If check_stream_res is C_ERR, we can pass through to processCommandAndResetClient()
             //    because it will be success for EXIT command 
-            //    or it will fail for the ACL, commant parameters not match.
+            //    or it will fail for the ACL, commant parameters not match or not supported command
+            //    or it is in MULTI state and queue some commands
             // We want the wrong reply info ASAP
-            if (check_stream_res != C_ERR) {
+            int check_stream_res = checkAndSetStreamWriting(c);
+            if (check_stream_res == C_OK) {
+                if (c->streamWriting == STREAM_WRITE_WAITING) break;
+
                 int is_stream_write = (c->id == server.streamCurrentClientId);
                 checkAndSetRockKeyNumber(c, is_stream_write);
                 if (c->rockKeyNumber > 0) break;
