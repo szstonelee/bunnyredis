@@ -775,7 +775,7 @@ struct redisCommand redisCommandTable[] = {
      "no-script fast ok-loading ok-stale @transaction",
      0,NULL,0,0,0,0,0,0},
 
-    {"exec",NULL,1,execCommand,1,
+    {"exec",execCmdForRock,1,execCommand,1,
      "no-script no-monitor no-slowlog ok-loading ok-stale @transaction",
      0,NULL,0,0,0,0,0,0},
 
@@ -4141,6 +4141,13 @@ int processCommand(client *c) {
 
     /* Check if the user can run this command according to the current
      * ACLs. */
+    /* We need to commont the ACL check in real execution of Redis
+     * because Stream Write is async. So When stream write is coming, 
+     * if some clients changed the ACL, the virtual client will succeed but 
+     * the concrete client will fail. Even ACL is stream write,
+     * but the transaction is only checked in queue phase not the submit moment 
+     * We need to check ACL before stream write checkAndSetStreamWriting() */ 
+    /*
     int acl_errpos;
     int acl_retval = ACLCheckAllPerm(c,&acl_errpos);
     if (acl_retval != ACL_OK) {
@@ -4167,6 +4174,7 @@ int processCommand(client *c) {
         }
         return C_OK;
     }
+    */
 
     /* If cluster is enabled perform the cluster redirection here.
      * However we don't perform the redirection if:

@@ -66,7 +66,7 @@ def _main():
             key = next(it)
         val = kvs[key]
 
-        dice = random.randint(1, 3)     # we test without append
+        dice = random.randint(1, 5)     # we test without append
 
         if dice == 1:
             # for common kvs
@@ -94,6 +94,21 @@ def _main():
             append_str = "a"
             try:
                 r.append(key=key, value=append_str)
+                kvs[key] += append_str
+            except redis.exceptions.ResponseError as e:
+                print(e)
+                time.sleep(0.1)
+        elif dice == 5:
+            # transaction
+            try:
+                append_str = "b"
+                pipe = r.pipeline()
+                pipe.multi()
+                pipe.append(key=key, value=append_str)
+                pipe.get(name=key)
+                for k, v in common_kvs.items():
+                    pipe.append(k, "c")
+                pipe.execute()
                 kvs[key] += append_str
             except redis.exceptions.ResponseError as e:
                 print(e)

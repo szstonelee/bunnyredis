@@ -23,5 +23,6 @@ sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field)
 /* Command check rock value API */
 list* getCmdForRock(client *c);
 list* appendCmdForRock(client *c);
+list* execCmdForRock(client *c);
 
 #endif

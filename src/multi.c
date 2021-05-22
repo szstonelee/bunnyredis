@@ -203,6 +203,16 @@ void execCommand(client *c) {
 
         /* ACL permissions are also checked at the time of execution in case
          * they were changed after the commands were queued. */
+
+        /* We need to commont the ACL check in real execution of Redis
+        * because Stream Write is async. So When stream write is coming, 
+        * if some clients changed the ACL, the virtual client will succeed but 
+        * the concrete client will fail. Even ACL is stream write,
+        * but the transaction is only checked in queue phase not the submit moment 
+        * We need to check ACL before stream write checkAndSetStreamWriting() */ 
+        call(c,server.loading ? CMD_CALL_NONE : CMD_CALL_FULL);
+        serverAssert((c->flags & CLIENT_BLOCKED) == 0);
+        /*
         int acl_errpos;
         int acl_retval = ACLCheckAllPerm(c,&acl_errpos);
         if (acl_retval != ACL_OK) {
@@ -232,6 +242,7 @@ void execCommand(client *c) {
             call(c,server.loading ? CMD_CALL_NONE : CMD_CALL_FULL);
             serverAssert((c->flags & CLIENT_BLOCKED) == 0);
         }
+        */
 
         /* Commands may alter argc/argv, restore mstate. */
         c->mstate.commands[j].argc = c->argc;
@@ -275,6 +286,48 @@ handle_monitor:
      * table, and we do it here with correct ordering. */
     if (listLength(server.monitors) && !server.loading)
         replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
+}
+
+/* exec command to check Rock key is special. It needs to check every command in transaction,
+ * and join all the Rock keys */
+list* execCmdForRock(client *c) {
+    serverAssert(c->mstate.count > 0);
+
+    list* all_keys = listCreate();
+    int saved_argc = c->argc;
+    robj **saved_argv = c->argv;
+    struct redisCommand *saved_cmd = c->cmd;
+    for (int i = 0; i < c->mstate.count; ++i) {
+        multiCmd *mc = c->mstate.commands+i;
+        c->argc = mc->argc;
+        c->argv = mc->argv;
+        c->cmd = mc->cmd;
+        if (c->cmd->rock_proc) {
+            list* each_rock_keys = c->cmd->rock_proc(c);
+            if (each_rock_keys) {
+                listIter li;
+                listNode *ln;
+                listRewind(each_rock_keys, &li);
+                while ((ln = listNext(&li))) {
+                    sds rock_key = listNodeValue(ln);
+                    serverAssert(rock_key);
+                    listAddNodeTail(all_keys, rock_key);
+                }
+                listRelease(each_rock_keys);    // only destory list but not the sds keys in it
+            }
+        }
+    }
+    // recover argc and argv
+    c->argc = saved_argc;
+    c->argv = saved_argv;
+    c->cmd = saved_cmd;
+
+    if (listLength(all_keys) == 0) {
+        listRelease(all_keys);
+        return NULL;
+    } else {
+        return all_keys;
+    }
 }
 
 /* ===================== WATCH (CAS alike for MULTI/EXEC) ===================

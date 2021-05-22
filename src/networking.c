@@ -2180,6 +2180,34 @@ void processInputBuffer(client *c) {
             //    or it is in MULTI state and queue some commands
             // We want the wrong reply info ASAP
             int check_stream_res = checkAndSetStreamWriting(c);
+            switch (check_stream_res) {
+            case STREAM_CHECK_SET_STREAM:
+            case STREAM_CHECK_GO_ON_WITH_ERROR:
+            case STREAM_CHECK_GO_ON_NO_ERROR:
+            case STREAM_CHECK_EMPTY_TRAN:
+                break;
+            case STREAM_CHECK_ACL_FAIL:
+                commandProcessed(c);
+                break;
+            default:
+                serverLog(LL_WARNING, "checkAndSetStreamWriting() return unknow result!");
+                exit(1);
+            }
+
+            // When enter stream phase, we can not process input buffer or do any coomand executiong
+            if (c->streamWriting == STREAM_WRITE_WAITING) break;
+
+            if (check_stream_res != STREAM_CHECK_ACL_FAIL) {
+                if (check_stream_res == STREAM_CHECK_GO_ON_NO_ERROR) {
+                    checkAndSetRockKeyNumber(c, c->id == server.streamCurrentClientId);
+                    // When ener rock phase, we can not process input buffer or do any coomand executiong
+                    if (c->rockKeyNumber > 0) break;    
+                } 
+                
+                if (processCommandAndResetClient(c) == C_ERR) return;    
+            }
+
+            /*
             if (check_stream_res == C_OK) {
                 if (c->streamWriting == STREAM_WRITE_WAITING) break;
 
@@ -2187,13 +2215,14 @@ void processInputBuffer(client *c) {
                 checkAndSetRockKeyNumber(c, is_stream_write);
                 if (c->rockKeyNumber > 0) break;
             }
+            */
 
-            if (processCommandAndResetClient(c) == C_ERR) {
+            // if (processCommandAndResetClient(c) == C_ERR) {
                 /* If the client is no longer valid, we avoid exiting this
                  * loop and trimming the client buffer later. So we return
                  * ASAP in that case. */
-                return;
-            }
+                // return;
+            // }
         }
     }
 

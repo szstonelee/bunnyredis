@@ -293,40 +293,32 @@ static int parse_msg_for_exec(sds msg, uint8_t *node_id, uint64_t *client_id, ui
  * for streamwrite which may come from other nodes's clients or 
  * the client in the node which issue a streamwrite comand then the connection is broken in asyinc mode */
 
-/* reference server.c processCommand()
- * return C_ERR for four cases
- *        1. the command is "quit" COMMAND.
- *        2. if the command check failed (and will exec without data modification but reply error info) 
- *        3. the client in MULTI state and not "exec", so it can be queud
- *        4. the client in MULTI state and "exec" but CLIENT_DIRTY_EXEC
- * If C_ERR, the caller can goes on to reply info to client, check networking.c processInputBuffer()
- * 
- * return C_OK for three cases
- *        1. The command is in the stream catagory which needs to be streamed, 
- *           it will set  STREAM_WRITE_WAITING for concrete client
- *           but the caller need to check c->streamWritng
- *        2. the client is in MULTI state, and the command is "exec". 
- *           Acturally, it is a special case for 1
- *        3. The command is not in stream catgory, read commands or forbidden commands
- * If C_OK, the caller needs to chck STREAM_WRITE_WAITING and Rock keys */
+/* reference server.c processCommand(). The caller is networing.c processInputBuffer()
+ * return 
+ *         STREAM_CHECK_GO_ON_NO_ERROR. The caller can go on to execute with rock key check
+ *         STREAM_CHECK_GO_ON_WITH_ERROR. The caller can go on without rock key check
+ *         STREAM_CHECK_ACL_FAIL. Alreay reply with ACL failed info.
+ *         STREAM_CHECK_EMPTY_TRAN. The caller can go on. no need to check rock key and STREAM WAITING STATE
+ *         STREAM_CHECK_SET_STREAM. Start the stream phase */
 int checkAndSetStreamWriting(client *c) {
-    serverAssert(c->streamWriting == STREAM_WRITE_INIT);
+    // The caller is concrete client and the state is STREAM_WRITE_INIT
+    serverAssert(c->streamWriting == STREAM_WRITE_INIT && c != server.virtual_client);
 
     // quit command is a shortcut
-    if (!strcasecmp(c->argv[0]->ptr,"quit")) return C_ERR;
+    if (!strcasecmp(c->argv[0]->ptr,"quit")) return STREAM_CHECK_GO_ON_NO_ERROR;
 
     struct redisCommand *cmd = lookupCommand(c->argv[0]->ptr);
 
     // command name can not parse 
-    if (!cmd) return C_ERR;
+    if (!cmd) return STREAM_CHECK_GO_ON_WITH_ERROR;
 
     if (cmd->streamCmdCategory == STREAM_FORBIDDEN_CMD)
-        return C_ERR;
+        return STREAM_CHECK_GO_ON_WITH_ERROR;
 
     // command basic parameters number is not OK
     if ((cmd->arity > 0 && cmd->arity != c->argc) ||
         (c->argc < -cmd->arity)) 
-        return C_ERR;
+        return STREAM_CHECK_GO_ON_WITH_ERROR;
  
     // NOTE: we can not directly use processCommand() code 
     // because c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr); in processCommand()
@@ -340,21 +332,42 @@ int checkAndSetStreamWriting(client *c) {
     if (auth_required) {
         /* AUTH and HELLO and no auth modules are valid even in
          * non-authenticated state. */
-        if (!(cmd->flags & CMD_NO_AUTH)) return C_ERR;
+        if (!(cmd->flags & CMD_NO_AUTH)) return STREAM_CHECK_GO_ON_WITH_ERROR;
     }
 
-    // check ACL, NOTE: we need to recover the c's cmd and lastcmd
+    // check ACL, NOTE: we need to recover the c's cmd and lastcmd before return
     struct redisCommand *savedCmd = c->cmd;
     struct redisCommand *savedLastcmd = c->lastcmd;
-
     c->cmd = c->lastcmd = cmd;
 
+    // ACL
     int acl_errpos;
     int acl_retval = ACLCheckAllPerm(c,&acl_errpos);
     if (acl_retval != ACL_OK) {
+        switch (acl_retval) {
+        case ACL_DENIED_CMD:
+            rejectCommandFormat(c,
+                "-NOPERM this user has no permissions to run "
+                "the '%s' command or its subcommand", c->cmd->name);
+            break;
+        case ACL_DENIED_KEY:
+            rejectCommandFormat(c,
+                "-NOPERM this user has no permissions to access "
+                "one of the keys used as arguments");
+            break;
+        case ACL_DENIED_CHANNEL:
+            rejectCommandFormat(c,
+                "-NOPERM this user has no permissions to access "
+                "one of the channels used as arguments");
+            break;
+        default:
+            rejectCommandFormat(c, "no permission");
+            break;
+        }
+
         c->cmd = savedCmd;
         c->lastcmd = savedLastcmd;
-        return C_ERR;
+        return STREAM_CHECK_ACL_FAIL;
     }
 
     /* Only allow a subset of commands in the context of Pub/Sub if the
@@ -368,41 +381,42 @@ int checkAndSetStreamWriting(client *c) {
         c->cmd->proc != resetCommand) {
         c->cmd = savedCmd;
         c->lastcmd = savedLastcmd;
-        return C_ERR;        
+        return STREAM_CHECK_GO_ON_WITH_ERROR;        
     }
 
     if ((c->flags & CLIENT_MULTI)) {
-        int return_c_err = 0;
-
+        // For transaction, we need special check. Even the command belongs to STREAM_ENABLED_CMD,
+        // in transaction context, it could be queued to avoid setting STREAM_WRITE_WAITING
         if (cmd->proc != execCommand) {
-            return_c_err = 1;       // command could be queued
-        } else { 
-            if ((c->flags & CLIENT_DIRTY_EXEC)) {
-                return_c_err = 1;       // exec will fail because of CLIENT_DIRTY_EXEC
-            } else if (c->mstate.count == 0) {
-                return_c_err = 1;       // empty transaction, i.e., MULTI then EXEC
-            }
-        }
-
-        if (return_c_err) {
             c->cmd = savedCmd;
             c->lastcmd = savedLastcmd;
-            return C_ERR;
+            return STREAM_CHECK_GO_ON_NO_ERROR;       // command could be queued
+        } else { 
+            if ((c->flags & CLIENT_DIRTY_EXEC)) {
+                c->cmd = savedCmd;
+                c->lastcmd = savedLastcmd;
+                return STREAM_CHECK_GO_ON_WITH_ERROR;       // exec will fail because of CLIENT_DIRTY_EXEC
+            } else if (c->mstate.count == 0) {
+                c->cmd = savedCmd;
+                c->lastcmd = savedLastcmd;
+                return STREAM_CHECK_EMPTY_TRAN;       // empty transaction, i.e., MULTI then EXEC
+            }
         }
     }
-
-    if (cmd->streamCmdCategory == STREAM_ENABLED_CMD && c != server.virtual_client)
-        c->streamWriting = STREAM_WRITE_WAITING;    // we set STREAM_WRITE_WAITING for the caller
-
-    // recover client to saved info
-    c->cmd = savedCmd;
-    c->lastcmd = savedLastcmd;
-
-    // add command info as message to sndMsgs which will trigger stream write
-    if (c->streamWriting == STREAM_WRITE_WAITING)
+    
+    if (cmd->streamCmdCategory == STREAM_ENABLED_CMD) {
+        // we set STREAM_WRITE_WAITING for the concrete caller
+        c->streamWriting = STREAM_WRITE_WAITING;    
+        // add command info as message to sndMsgs which will trigger stream write
         addCommandToStreamWrite(c);
-
-    return C_OK;
+        c->cmd = savedCmd;
+        c->lastcmd = savedLastcmd;
+        return STREAM_CHECK_SET_STREAM;
+    } else {
+        c->cmd = savedCmd;
+        c->lastcmd = savedLastcmd;
+        return STREAM_CHECK_GO_ON_NO_ERROR;     // e.g. read command
+    }
 }
 
 /* set virtual client context for command, dbid and args 
@@ -411,7 +425,8 @@ int checkAndSetStreamWriting(client *c) {
  * and it is based on sds string not robj* */
 static void setVirtualClinetContextForNoTransaction(uint8_t dbid, sds command, list *args) {
     // setVirtualClinetContext() is not reentry if not called freeVirtualClientContext() before (or init)
-    serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);        
+    serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0); 
+    serverAssert(server.virtual_client->mstate.count == 0);       
 
     client *c = server.virtual_client;
 
@@ -448,6 +463,7 @@ static void setVirtualClinetContextForNoTransaction(uint8_t dbid, sds command, l
  * So we can use the resource from concrete resource */
 static void setVirtualClinetContextForNoTransactionFromConcrete(client *concrete) {
     serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);
+    serverAssert(server.virtual_client->mstate.count == 0);       
 
     client *virtual = server.virtual_client;
     int select_res = selectDb(virtual, concrete->db->id);
@@ -464,8 +480,8 @@ static void setVirtualClinetContextForNoTransactionFromConcrete(client *concrete
 }
 
 static void setVirtualClinetContextForTransaction(uint8_t dbid, list *cmds, list *args) {
-    // setVirtualClinetContext() is not reentry if not called freeVirtualClientContext() before (or init)
     serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);        
+    serverAssert(server.virtual_client->mstate.count == 0);       
 
     client *c = server.virtual_client;
 
@@ -493,19 +509,20 @@ static void setVirtualClinetContextForTransaction(uint8_t dbid, list *cmds, list
     listRewind(cmds, &li_each_cmd);
     listRewind(args, &li_each_args);
     for (size_t i = 0; i < multi_cmd_len; ++i) {
-        ln_each_cmd = listNext(&li_each_cmd);
-        ln_each_args = listNext(&li_each_args);
-        serverAssert(ln_each_cmd && ln_each_args);
+        multiCmd *mc = c->mstate.commands+i;
 
+        ln_each_cmd = listNext(&li_each_cmd);
+        serverAssert(ln_each_cmd);
         sds each_cmd_sds = listNodeValue(ln_each_cmd);
+        serverAssert(each_cmd_sds);
         struct redisCommand *redis_cmd = lookupCommand(each_cmd_sds);
         serverAssert(redis_cmd);
-        list *each_args = listNodeValue(ln_each_args);
-        serverAssert(each_cmd_sds);
-
-        multiCmd *mc = c->mstate.commands+i;
-        mc->argc = 1 + (each_args ? 0 : listLength(each_args));
         mc->cmd = redis_cmd;
+
+        ln_each_args = listNext(&li_each_args);
+        serverAssert(ln_each_args);
+        list *each_args = listNodeValue(ln_each_args);
+        mc->argc = 1 + (each_args ? listLength(each_args) : 0);
         mc->argv = zmalloc(sizeof(robj*)*mc->argc);
         mc->argv[0] = createStringObject(each_cmd_sds, sdslen(each_cmd_sds));
         if (each_args) {
@@ -526,6 +543,7 @@ static void setVirtualClinetContextForTransaction(uint8_t dbid, list *cmds, list
 
 static void setVirtualClinetContextForTransactionFromConcrete(client *concrete) {
     serverAssert(server.virtual_client->argv == NULL && server.virtual_client->argc == 0);  
+    serverAssert(server.virtual_client->mstate.count == 0);       
 
     client *virtual = server.virtual_client;
 
@@ -640,8 +658,15 @@ void execVirtualCommand() {
     /* Run the command */
     serverAssert(lookupStreamCurrentClient() == server.virtual_client);
     serverAssert(server.virtual_client->rockKeyNumber == 0);
-    int call_flags = CMD_CALL_SLOWLOG | CMD_CALL_STATS;
-    call(server.virtual_client, call_flags);
+
+    if (server.virtual_client->mstate.count == 0) {
+        int call_flags = CMD_CALL_SLOWLOG | CMD_CALL_STATS;
+        call(server.virtual_client, call_flags);
+    } else {
+        // call to multi.c 
+        execCommand(server.virtual_client);
+    }
+    
     serverAssert((server.virtual_client->flags & CLIENT_BLOCKED) == 0);     // can not block virtual client
 
     // clean up
@@ -928,7 +953,7 @@ static client* processExecCommandForStreamWrite(uint8_t node_id, uint64_t client
     if (c != server.virtual_client) {
         serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
         serverAssert(strcasecmp(c->argv[0]->ptr, "exec") == 0);
-        serverAssert((size_t)c->argc == 1 + listLength(args));
+        serverAssert(c->argc == 1);
 
         c->streamWriting = STREAM_WRITE_FINISH;
         int is_stream_write = (c->id == server.streamCurrentClientId);

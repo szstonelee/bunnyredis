@@ -189,6 +189,7 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
     struct redisCommand *cmd = lookupCommand(c->argv[0]->ptr);
     serverAssert(cmd);
 
+    // the command does not need to check rock key, e.g., set <key> <val>
     if (!cmd->rock_proc) return;
 
     list *rock_keys = cmd->rock_proc(c);    // NOTE: rock_keys is allocated by cmd->rock_proc()
