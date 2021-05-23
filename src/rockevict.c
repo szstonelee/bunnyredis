@@ -33,15 +33,15 @@ static void _dictRehashStep(dict *d) {
     if (d->pauserehash == 0) dictRehash(d,1);
 }
 
-static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru, dictEntry **des, dictEntry **lru_des, unsigned int count) {
-    unsigned long j; /* internal hash table id, 0 or 1. */
-    unsigned long tables; /* 1 or 2 tables? */
-    unsigned long stored = 0, maxsizemask;
-    unsigned long maxsteps;
-
+/* We randomly select some keys which ty[e is OBJ_STRING of OBJ_ENCODING_RAW and not shared object */
+static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru, 
+                                                dictEntry **des, 
+                                                dictEntry **lru_des, 
+                                                unsigned int count) {    
     if (dictSize(d) < count) count = dictSize(d);
-    maxsteps = count*10;
+    unsigned long maxsteps = count*10;
 
+    unsigned long j; /* internal hash table id, 0 or 1. */
     /* Try to do a rehashing work proportional to 'count'. */
     for (j = 0; j < count; j++) {
         if (dictIsRehashing(d))
@@ -56,6 +56,8 @@ static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru, dictEntry **
             break;
     }
 
+    unsigned long tables; /* 1 or 2 tables? */
+    unsigned long stored = 0, maxsizemask;    
     tables = dictIsRehashing(d) ? 2 : 1;
     maxsizemask = d->ht[0].sizemask;
     if (tables > 1 && maxsizemask < d->ht[1].sizemask)
@@ -101,7 +103,9 @@ static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru, dictEntry **
                      * empty while iterating. */
                     robj *o = he->v.val;
                     serverAssert(o);
-                    if (o->type == OBJ_STRING && o->refcount != OBJ_SHARED_REFCOUNT) {
+                    if (o->type == OBJ_STRING && 
+                        (o->encoding == OBJ_ENCODING_RAW || o->encoding == OBJ_ENCODING_EMBSTR) && 
+                        o->refcount != OBJ_SHARED_REFCOUNT) {
                         *des = he;
                         *lru_des = lru_he;
                         des++;
@@ -135,25 +139,22 @@ static unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de) 
 
 /* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
 static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, struct evictKeyPoolEntry *pool) {
-    int j, k, count;
+
     dictEntry *samples[server.maxmemory_samples];
     dictEntry *lru_samples[server.maxmemory_samples];
+    int count = dictGetSomeKeysOfStringType(sampledict, lru_dict, samples, lru_samples, server.maxmemory_samples);
 
-    count = dictGetSomeKeysOfStringType(sampledict, lru_dict, samples, lru_samples, server.maxmemory_samples);
-
+    int j, k;
+    unsigned long long idle;
+    sds key;
+    dictEntry *de;
+    dictEntry *lru_de;
+    sds cached;
     for (j = 0; j < count; j++) {
-        unsigned long long idle;
-        sds key;
-        // robj *o;
-        dictEntry *de;
-        dictEntry *lru_de;
-
         de = samples[j];
         lru_de = lru_samples[j];
         key = dictGetKey(de);
 
-        // o = dictGetVal(de);
-        // idle = estimateObjectIdleTime(o);
         idle = estimateObjectIdleTimeFromLruDictEntry(lru_de);
 
         /* Insert the element inside the pool.
@@ -177,7 +178,7 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
                  * all the elements from k to end to the right. */
 
                 /* Save SDS before overwriting. */
-                sds cached = pool[EVPOOL_SIZE-1].cached;
+                cached = pool[EVPOOL_SIZE-1].cached;
                 memmove(pool+k+1,pool+k,
                     sizeof(pool[0])*(EVPOOL_SIZE-k-1));
                 pool[k].cached = cached;
@@ -186,7 +187,7 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
                 k--;
                 /* Shift all elements on the left of k (included) to the
                  * left, so we discard the element with smaller idle time. */
-                sds cached = pool[0].cached; /* Save SDS before overwriting. */
+                cached = pool[0].cached; /* Save SDS before overwriting. */
                 if (pool[0].key != pool[0].cached) sdsfree(pool[0].key);
                 memmove(pool,pool+1,sizeof(pool[0])*k);
                 pool[k].cached = cached;
@@ -210,7 +211,7 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
     }
 }
 
-static int getKeyOfStringPercentage() {
+static int getRockKeyOfStringPercentage() {
     long long keyCnt = 0;
     long long rockCnt = 0;
     redisDb *db;
@@ -221,10 +222,7 @@ static int getKeyOfStringPercentage() {
         rockCnt += db->stat_key_str_rockval_cnt;
     }
 
-    if (keyCnt == 0) 
-        return 100;
-    else
-        return (int)((long long)100 * rockCnt / keyCnt);
+    return keyCnt == 0 ? 100 :(int)((long long)100 * rockCnt / keyCnt);    
 }
 
 /* return EVICT_ROCK_OK if no need to eviction value or evict enough value 
@@ -244,17 +242,10 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
     // Check the percentage of RockKey vs total key. 
     // We do not need to waste time for high percentage of rock keys, e.g. 98%, 
     // because mostly it will be timeout for no evicting enough memory
-    if (getKeyOfStringPercentage() >= ROCK_KEY_UPPER_PERCENTAGE) {
-        long long keyCnt = 0;
-        long long rockCnt = 0;
-        redisDb *db;
-        for (int i = 0; i < server.dbnum; ++i) {
-            db = server.db+i;
-            keyCnt += db->stat_key_str_cnt;
-            rockCnt += db->stat_key_str_rockval_cnt;
-        }
-        serverLog(LL_WARNING, "total key cnt = %lld, rock cnt = %lld, percentage = %d",
-                  keyCnt, rockCnt, (int)((long long)100 * rockCnt / keyCnt));
+    int rock_key_percentage = getRockKeyOfStringPercentage();
+    if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
+        serverLog(LL_WARNING, "getRockKeyOfStringPercentage() over limit, limit = %d%%, percentage = %d%%",
+                  ROCK_KEY_UPPER_PERCENTAGE, rock_key_percentage);
         return EVICT_ROCK_PERCENTAGE; 
     }
 
@@ -287,8 +278,9 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
         struct evictKeyPoolEntry *pool = EvictKeyPool;
 
         int fail_cnt = 0;
+        unsigned long total_keys, keys;
         while(bestkey == NULL && fail_cnt < 100) {
-            unsigned long total_keys = 0, keys;
+            total_keys = 0;
 
             /* We don't want to make local-db choices when expiring keys,
              * so to start populate the eviction pool sampling keys from
@@ -329,7 +321,9 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
                 int is_ghost = 1;
                 if (de) {
                     valstrobj = (robj*)dictGetVal(de);
-                    if (valstrobj->type == OBJ_STRING && valstrobj->refcount != OBJ_SHARED_REFCOUNT)
+                    if (valstrobj->type == OBJ_STRING && 
+                        (valstrobj->encoding == OBJ_ENCODING_RAW || valstrobj->encoding == OBJ_ENCODING_EMBSTR) &&
+                        valstrobj->refcount != OBJ_SHARED_REFCOUNT)
                         is_ghost = 0;                       
                 }
                 if (!is_ghost) {
@@ -392,9 +386,10 @@ void debugReportMemAndKey() {
         dictReleaseIterator(di);
 
         if (keyCnt)
-            serverLog(LL_WARNING, "dbid = %d, keyCnt = %d, strCnt = %d, rockCnt = %d, stat_key_str_ cnt = %lld, stat_key_str_rockval_cnt = %lld", 
-                                   i, keyCnt, strCnt, rockCnt, 
-                                   (server.db+i)->stat_key_str_cnt, (server.db+i)->stat_key_str_rockval_cnt);
+            serverLog(LL_WARNING, 
+                      "dbid = %d, keyCnt = %d, strCnt = %d, rockCnt = %d, stat_key_str_ cnt = %lld, stat_key_str_rockval_cnt = %lld", 
+                      i, keyCnt, strCnt, rockCnt, 
+                      (server.db+i)->stat_key_str_cnt, (server.db+i)->stat_key_str_rockval_cnt);
     }
 }
 

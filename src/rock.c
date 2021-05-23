@@ -152,11 +152,16 @@ void debugRockCommand(client *c) {
             addReplyError(c, "key found, but type is not OBJ_STRING");
             return;
         }
+        if (val->encoding != OBJ_ENCODING_RAW) {
+            addReplyError(c, "key found but type is not OBJ_ENCODING_RAW");
+            return;
+        }
+
         if (val == shared.keyRockVal) {
             addReplyError(c, "key found, but the value has already been shared.keyRockVal");
             return;
         }
-        
+
         dictSetVal(c->db->dict, de, shared.keyRockVal);
         ++c->db->stat_key_str_rockval_cnt;
         addRockWriteTaskOfString(c->db->id, key->ptr, val->ptr);
@@ -298,7 +303,7 @@ static void decode_rock_key(sds const rock_key, uint8_t *type, uint8_t *dbid, ch
 void addRockWriteTaskOfString(const uint8_t dbid, sds const key, sds const val) {
     sds rock_key, copy_val;
     struct WriteTask *task;
-    
+
     // the resource will be reclaimed in pickWriteTasksInWriteThread()
     task = zmalloc(sizeof(struct WriteTask));
     rock_key = encode_rock_key_for_string(dbid, key);
@@ -846,8 +851,9 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
             serverAssert(c->rockKeyNumber);
             --c->rockKeyNumber;
             if (c->rockKeyNumber == 0) {
-                checkAndSetRockKeyNumber(c, server.streamCurrentClientId == client_id);
-                if (c->rockKeyNumber == 0) processCommandAndResetClient(c);
+                int is_stream = server.streamCurrentClientId == client_id;
+                checkAndSetRockKeyNumber(c, is_stream);
+                if (c->rockKeyNumber == 0) processCommandAndResetClient(c, is_stream);
             }
         } else {
             if (client_id == VIRTUAL_CLIENT_ID)

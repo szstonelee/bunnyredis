@@ -2035,7 +2035,9 @@ void commandProcessed(client *c) {
  *
  * The function returns C_ERR in case the client was freed as a side effect
  * of processing the command, otherwise C_OK is returned. */
-int processCommandAndResetClient(client *c) {
+int processCommandAndResetClient(client *c, int from_stream) {
+    serverAssert(c->rockKeyNumber == 0);
+
     int deadclient = 0;
     client *old_client = server.current_client;
     server.current_client = c;
@@ -2055,12 +2057,15 @@ int processCommandAndResetClient(client *c) {
      * result in a slave, that may be the active client, to be
      * freed. */
     serverAssert(c->id != VIRTUAL_CLIENT_ID);       // processCommandAndResetClient() can only be called by concrete client
-    c->streamWriting = STREAM_WRITE_INIT;    // after the command exectued in the current c, we need reset streamWriting
-    if (c->id == server.streamCurrentClientId) {
-        // if the concrete client is from stream write, we need to clear
+    if (from_stream) {        
+        serverAssert(c->streamWriting == STREAM_WRITE_FINISH);
+        c->streamWriting = STREAM_WRITE_INIT;    // after the command exectued in the current c, we need reset streamWriting
+        serverAssert(c->id == server.streamCurrentClientId);
         server.streamCurrentClientId = NO_STREAM_CLIENT_ID;   
         // after finished one strem write command, we need goon for the others
-        try_to_execute_stream_commands();       
+        // because the signal maybe has been consumed in async mode
+        try_to_execute_stream_commands();    
+        // processInputBuffer(c);   
     }
     return deadclient ? C_ERR : C_OK;
 }
@@ -2072,7 +2077,7 @@ int processCommandAndResetClient(client *c) {
 int processPendingCommandsAndResetClient(client *c) {
     if (c->flags & CLIENT_PENDING_COMMAND) {
         c->flags &= ~CLIENT_PENDING_COMMAND;
-        if (processCommandAndResetClient(c) == C_ERR) {
+        if (processCommandAndResetClient(c, 0) == C_ERR) {
             return C_ERR;
         }
     }
@@ -2098,7 +2103,7 @@ void processInputBuffer(client *c) {
         /* Don't process more buffers from clients that have already pending
          * commands to execute in c->argv. */
         if (c->flags & CLIENT_PENDING_COMMAND) break;
-
+        
         /* Don't process input from the master while there is a busy script
          * condition on the slave. We want just to accumulate the replication
          * stream (instead of replying -BUSY like we do with other clients) and
@@ -2123,6 +2128,7 @@ void processInputBuffer(client *c) {
 
         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) break;
+            
             /* If the Gopher mode and we got zero or one argument, process
              * the request in Gopher mode. To avoid data race, Redis won't
              * support Gopher if enable io threads to read queries. */
@@ -2136,7 +2142,7 @@ void processInputBuffer(client *c) {
                 break;
             }
         } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
-            if (processMultibulkBuffer(c) != C_OK) break;
+            if (processMultibulkBuffer(c) != C_OK) break;            
         } else {
             serverPanic("Unknown request type");
         }
@@ -2195,17 +2201,23 @@ void processInputBuffer(client *c) {
             }
 
             // When enter stream phase, we can not process input buffer or do any coomand executiong
-            if (c->streamWriting == STREAM_WRITE_WAITING) break;
+            if (check_stream_res == STREAM_CHECK_SET_STREAM) break;
+                        
+            // When STREAM_CHECK_ACL_FAIL, it has been processed already
+            if (check_stream_res == STREAM_CHECK_ACL_FAIL) continue;
 
-            if (check_stream_res != STREAM_CHECK_ACL_FAIL) {
-                if (check_stream_res == STREAM_CHECK_GO_ON_NO_ERROR) {
-                    checkAndSetRockKeyNumber(c, c->id == server.streamCurrentClientId);
+            if (check_stream_res == STREAM_CHECK_GO_ON_NO_ERROR) {
+                serverAssert(c->id != server.streamCurrentClientId);
+                // NOTE: if in MULTI state, we do not need to check rock key, 
+                // otherwise it can stop anything if some keys are evicted
+                if (!(c->flags & CLIENT_MULTI)) {
+                    checkAndSetRockKeyNumber(c, 0);
                     // When ener rock phase, we can not process input buffer or do any coomand executiong
-                    if (c->rockKeyNumber > 0) break;    
-                } 
-                
-                if (processCommandAndResetClient(c) == C_ERR) return;    
-            }
+                    if (c->rockKeyNumber > 0) break;
+                }
+            } 
+
+            if (processCommandAndResetClient(c, 0) == C_ERR) return;    
 
             /*
             if (check_stream_res == C_OK) {

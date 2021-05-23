@@ -6,11 +6,11 @@
 #define NO_STREAM_CLIENT_ID UINT64_MAX
 #define VIRTUAL_CLIENT_ID (UINT64_MAX - 1)
 
-#define STREAM_CHECK_SET_STREAM           0     // set stream state
-#define STREAM_CHECK_GO_ON_WITH_ERROR     1     // go on to execute command(including queued the command), check found some error
-#define STREAM_CHECK_GO_ON_NO_ERROR       2     // go on to execute command(including queued the command), check does not found no error
-#define STREAM_CHECK_ACL_FAIL             3     // failed by ACL check, just return
-#define STREAM_CHECK_EMPTY_TRAN           4     // transaction is empty executution
+#define STREAM_CHECK_SET_STREAM           1     // set stream state
+#define STREAM_CHECK_GO_ON_WITH_ERROR     2     // go on to execute command(including queued the command), check found some error
+#define STREAM_CHECK_GO_ON_NO_ERROR       3     // go on to execute command(including queued the command), check does not found no error
+#define STREAM_CHECK_ACL_FAIL             4     // failed by ACL check, just return
+#define STREAM_CHECK_EMPTY_TRAN           5     // transaction is empty executution
 
 void initStreamPipeAndStartConsumer();
 void execVirtualCommand();

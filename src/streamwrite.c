@@ -917,11 +917,10 @@ static client *processNoExecCommandForStreamWrite(uint8_t node_id, uint64_t clie
         serverAssert((size_t)c->argc == 1 + listLength(args));
 
         c->streamWriting = STREAM_WRITE_FINISH;
-        int is_stream_write = (c->id == server.streamCurrentClientId);
-        checkAndSetRockKeyNumber(c, is_stream_write);        // after the stream phase, we can goon to rock phase
+        checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase
         if (c->rockKeyNumber == 0)
             // resume the excecution of concrete client and clear server.streamCurrentClient
-            processCommandAndResetClient(c);        
+            processCommandAndResetClient(c, 1);        
 
     } else {
         setVirtualClinetContextForNoTransaction(dbid, command, args);
@@ -956,11 +955,11 @@ static client* processExecCommandForStreamWrite(uint8_t node_id, uint64_t client
         serverAssert(c->argc == 1);
 
         c->streamWriting = STREAM_WRITE_FINISH;
-        int is_stream_write = (c->id == server.streamCurrentClientId);
-        checkAndSetRockKeyNumber(c, is_stream_write);        // after the stream phase, we can goon to rock phase
+        checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase
+
         if (c->rockKeyNumber == 0)
             // resume the excecution of concrete client and clear server.streamCurrentClient
-            processCommandAndResetClient(c);        
+            processCommandAndResetClient(c, 1);        
 
     } else {
         setVirtualClinetContextForTransaction(dbid, cmds, args);
