@@ -2035,7 +2035,7 @@ void commandProcessed(client *c) {
  *
  * The function returns C_ERR in case the client was freed as a side effect
  * of processing the command, otherwise C_OK is returned. */
-int processCommandAndResetClient(client *c, int from_stream) {
+int processCommandAndResetClient(client *c) {
     serverAssert(c->rockKeyNumber == 0);
 
     int deadclient = 0;
@@ -2057,14 +2057,14 @@ int processCommandAndResetClient(client *c, int from_stream) {
      * result in a slave, that may be the active client, to be
      * freed. */
     serverAssert(c->id != VIRTUAL_CLIENT_ID);       // processCommandAndResetClient() can only be called by concrete client
-    if (from_stream) {        
+    if (c->id == server.streamCurrentClientId) {        
         serverAssert(c->streamWriting == STREAM_WRITE_FINISH);
         c->streamWriting = STREAM_WRITE_INIT;    // after the command exectued in the current c, we need reset streamWriting
         serverAssert(c->id == server.streamCurrentClientId);
         server.streamCurrentClientId = NO_STREAM_CLIENT_ID;   
         // after finished one strem write command, we need goon for the others
         // because the signal maybe has been consumed in async mode
-        try_to_execute_stream_commands();    
+        // try_to_execute_stream_commands();    
         // processInputBuffer(c);   
     }
     return deadclient ? C_ERR : C_OK;
@@ -2077,7 +2077,7 @@ int processCommandAndResetClient(client *c, int from_stream) {
 int processPendingCommandsAndResetClient(client *c) {
     if (c->flags & CLIENT_PENDING_COMMAND) {
         c->flags &= ~CLIENT_PENDING_COMMAND;
-        if (processCommandAndResetClient(c, 0) == C_ERR) {
+        if (processCommandAndResetClient(c) == C_ERR) {
             return C_ERR;
         }
     }
@@ -2217,7 +2217,7 @@ void processInputBuffer(client *c) {
                 }
             } 
 
-            if (processCommandAndResetClient(c, 0) == C_ERR) return;    
+            if (processCommandAndResetClient(c) == C_ERR) return;    
 
             /*
             if (check_stream_res == C_OK) {

@@ -14,6 +14,7 @@ struct evictKeyPoolEntry {
 
 static struct evictKeyPoolEntry *EvictKeyPool;
 
+
 /* Create a new eviction pool. */
 void evictKeyPoolAlloc(void) {
     struct evictKeyPoolEntry *ep;
@@ -244,8 +245,6 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
     // because mostly it will be timeout for no evicting enough memory
     int rock_key_percentage = getRockKeyOfStringPercentage();
     if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
-        serverLog(LL_WARNING, "getRockKeyOfStringPercentage() over limit, limit = %d%%, percentage = %d%%",
-                  ROCK_KEY_UPPER_PERCENTAGE, rock_key_percentage);
         return EVICT_ROCK_PERCENTAGE; 
     }
 
@@ -465,5 +464,13 @@ void cronEvictToMakeRoom() {
 
     if (used_mem * 1000 / limit_mem <= 950) return;       // only over 95%, we start to evict
 
-    performKeyOfStringEvictions(1, 1<<20);      // evict at least 1M bytes, server.hz set 50, so 1 second call 50 times
+    int res = performKeyOfStringEvictions(1, 1<<20);      // evict at least 1M bytes, server.hz set 50, so 1 second call 50 times
+
+    static int over_pencentage_cnt = 0;
+    if (res == EVICT_ROCK_PERCENTAGE) {
+        ++over_pencentage_cnt;
+        over_pencentage_cnt = over_pencentage_cnt % 128;        // if Hz 50, so 2 seconds report once
+        if (over_pencentage_cnt == 0)
+            serverLog(LL_WARNING, "getRockKeyOfStringPercentage() over limit of percentage = %d%%", ROCK_KEY_UPPER_PERCENTAGE);
+    }
 }

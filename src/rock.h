@@ -5,7 +5,7 @@
 
 // from networking.c, because Redis does not provide networking.h
 void processInputBuffer(client *c);
-int processCommandAndResetClient(client *c, int from_stream);
+int processCommandAndResetClient(client *c);
 
 /* API */
 void checkAndSetRockKeyNumber(client *c, const int is_stream_write);

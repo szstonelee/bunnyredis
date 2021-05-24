@@ -853,7 +853,12 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
             if (c->rockKeyNumber == 0) {
                 int is_stream = server.streamCurrentClientId == client_id;
                 checkAndSetRockKeyNumber(c, is_stream);
-                if (c->rockKeyNumber == 0) processCommandAndResetClient(c, is_stream);
+                if (c->rockKeyNumber == 0) {
+                    int is_stream = c->id == server.streamCurrentClientId;
+                    processCommandAndResetClient(c);
+                    if (is_stream)
+                        try_to_execute_stream_commands();
+                }
             }
         } else {
             if (client_id == VIRTUAL_CLIENT_ID)
@@ -874,7 +879,10 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
                 --c->rockKeyNumber;
                 if (c->rockKeyNumber == 0) {
                     checkAndSetRockKeyNumber(c, 1);
-                    if (c->rockKeyNumber == 0) execVirtualCommand();
+                    if (c->rockKeyNumber == 0) {
+                        execVirtualCommand();
+                        try_to_execute_stream_commands();
+                    }
                 }
             }
         }

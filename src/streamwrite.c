@@ -9,8 +9,6 @@
 #include <uuid/uuid.h>
 
 
-int debug_self_tran = 0;
-
 // spin lock only run in Linux
 static pthread_spinlock_t consumerLock;     
 static pthread_spinlock_t producerLock;
@@ -724,7 +722,7 @@ void execVirtualCommand() {
     freeVirtualClientContext();     // the matched clearing-up for setVirtualClientContext()
 
     // after the current stream write command finished, we need to go on for other stream commands
-    try_to_execute_stream_commands();
+    // try_to_execute_stream_commands();
 }
 
 /*                                 */
@@ -972,26 +970,15 @@ static client *processNoExecCommandForStreamWrite(uint8_t node_id, uint64_t clie
         checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase
         if (c->rockKeyNumber == 0)
             // resume the excecution of concrete client and clear server.streamCurrentClient
-            processCommandAndResetClient(c, 1);        
+            processCommandAndResetClient(c);        
 
     } else {
-        if (debug_self_tran) {
-            serverLog(LL_WARNING, "debug_self_tran: stream write for virtual, command = %s, args len = %lu, nodeid = %d, client id = %lu", 
-                command, listLength(args), node_id, client_id);
-        }
-
         setVirtualClientContextForNoTransaction(dbid, command, args);
-
-        if (debug_self_tran) {
-            serverLog(LL_WARNING, "finished setVirtualClientContextForNoTransaction()");
-        }
 
         checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase 
         if (c->rockKeyNumber == 0) {
             // resume the execution of virtual client and clear server.streamCurrentClient
             execVirtualCommand();      
-            if (debug_self_tran) 
-                serverLog(LL_WARNING, "finished execVirtualCommand()");
         }
     }
 
@@ -1027,7 +1014,7 @@ static client* processExecCommandForStreamWrite(uint8_t node_id, uint64_t client
         checkAndSetRockKeyNumber(c, 1);        // after the stream phase, we can goon to rock phase
         if (c->rockKeyNumber == 0)
             // resume the excecution of concrete client and clear server.streamCurrentClient
-            processCommandAndResetClient(c, 1);        
+            processCommandAndResetClient(c);        
 
     } else {
         setVirtualClinetContextForTransaction(dbid, cmds, args);
@@ -1133,17 +1120,8 @@ void try_to_execute_stream_commands() {
             serverAssert(command && no_exec_args);
             c = processNoExecCommandForStreamWrite(node_id, client_id, dbid, command, no_exec_args);
         } else {
-            serverAssert(exec_cmds && exec_args);
-            
+            serverAssert(exec_cmds && exec_args);            
             c = processExecCommandForStreamWrite(node_id, client_id, dbid, exec_cmds, exec_args);
-
-            // debug
-            if (server.node_id == node_id) {
-                if (debug_self_tran == 0) {
-                    serverLog(LL_WARNING, "set debug_self_tran = 1");
-                    debug_self_tran = 1;
-                }
-            }
         }
 
         // if current stream client id is not finished, we need break
