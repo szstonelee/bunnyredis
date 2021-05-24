@@ -841,6 +841,7 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
     client *c;
     dictEntry *de;
     listRewind(all_client_ids, &li);
+    int need_go_on_for_stream = 0;
     while ((ln = listNext(&li))) {
         client_id = (uint64_t)listNodeValue(ln);
         de = dictFind(server.clientIdTable, (const void*)client_id);
@@ -857,7 +858,7 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
                     int is_stream = c->id == server.streamCurrentClientId;
                     processCommandAndResetClient(c);
                     if (is_stream)
-                        try_to_execute_stream_commands();
+                        need_go_on_for_stream = 1;
                 }
             }
         } else {
@@ -881,7 +882,7 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
                     checkAndSetRockKeyNumber(c, 1);
                     if (c->rockKeyNumber == 0) {
                         execVirtualCommand();
-                        try_to_execute_stream_commands();
+                        need_go_on_for_stream = 1;
                     }
                 }
             }
@@ -890,6 +891,9 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
 
     // release the last memory resource
     listRelease(all_client_ids);
+
+    if (need_go_on_for_stream)
+        try_to_execute_stream_commands();
 }
 
 void initRockPipeAndRockRead() {

@@ -1126,6 +1126,7 @@ void try_to_execute_stream_commands() {
 
         // if current stream client id is not finished, we need break
         if (server.streamCurrentClientId != NO_STREAM_CLIENT_ID) break;
+        
         serverAssert(c->rockKeyNumber == 0);     
     }    
 }
