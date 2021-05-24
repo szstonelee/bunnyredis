@@ -41,16 +41,15 @@ void initClientMultiState(client *c) {
 
 /* Release all the resources associated with MULTI/EXEC state */
 void freeClientMultiState(client *c) {
-    int j;
-
-    for (j = 0; j < c->mstate.count; j++) {
-        int i;
+    for (int j = 0; j < c->mstate.count; j++) {
         multiCmd *mc = c->mstate.commands+j;
 
-        for (i = 0; i < mc->argc; i++)
+        for (int i = 0; i < mc->argc; i++)
             decrRefCount(mc->argv[i]);
+
         zfree(mc->argv);
     }
+
     zfree(c->mstate.commands);
 }
 

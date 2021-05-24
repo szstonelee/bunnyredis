@@ -83,7 +83,7 @@ def dice_test(kvs, common_kvs, r):
             key = next(it)
         val = kvs[key]
 
-        dice = random.randint(1, 5)     # we test without append
+        dice = random.randint(1, 4)     # we test without append
 
         if dice == 1:
             # for common kvs
