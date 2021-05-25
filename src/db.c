@@ -504,7 +504,7 @@ dbBackup *backupDb(void) {
     for (int i=0; i<server.dbnum; i++) {
         backup->dbarray[i] = server.db[i];
         server.db[i].dict = dictCreate(&dbDictType,NULL);
-        server.db[i].key_lrus = dictCreate(&keyLruType,NULL);
+        server.db[i].key_lrus = dictCreate(&keyLruDictType,NULL);
         server.db[i].expires = dictCreate(&dbExpiresDictType,NULL);
     }
 

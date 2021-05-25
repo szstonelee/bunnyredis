@@ -1476,7 +1476,19 @@ dictType dbDictType = {
 /* Because Redis stores lru in a field of robj vlaue in db->dict. 
  * But the value may be dumped to RocksDB by rockevict.c.
  * So we need store lru with the key. Check db->key_lrus */ 
-dictType keyLruType = {
+dictType keyLruDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    NULL,                       /* key destructor */
+    NULL,                       /* val destructor */
+    dictExpandAllowed           /* allow to expand */
+};
+
+/* It is stored in server.evict_hash_candidates value 
+ * key is dbid + key, value is lru */
+dictType hashLruDictType = {
     dictSdsHash,                /* hash function */
     NULL,                       /* key dup */
     NULL,                       /* val dup */
@@ -1622,6 +1634,17 @@ dictType clientIdDictType = {
     NULL,                       /* val dup */
     NULL,                       /* key compare */
     NULL,                       /* key destructor, we stored the clientid in the key pointer */
+    NULL,                       /* val destructor */
+    NULL                        /* allow to expand */
+};
+
+/* value is an pointer to object of. NOTE: not accurately */
+dictType evictHashCandidatesDictType = {
+    dictSdsCaseHash,            /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCaseCompare,      /* key compare */
+    dictSdsDestructor,          /* key destructor */
     NULL,                       /* val destructor */
     NULL                        /* allow to expand */
 };
@@ -2717,7 +2740,7 @@ void createSharedObjects(void) {
     makeObjectShared(shared.keyRockVal);
 
     /* shard object which idicating the value of field in hash type in rocksdb */
-    shared.fieldRockVal = sdsnew("fieldRockVal");
+    shared.hashRockVal = sdsnew("hashRockVal");    
 }
 
 void initServerConfig(void) {
@@ -3321,7 +3344,7 @@ void initServer(void) {
     /* Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType,NULL);
-        server.db[j].key_lrus = dictCreate(&keyLruType,NULL);
+        server.db[j].key_lrus = dictCreate(&keyLruDictType,NULL);
         server.db[j].expires = dictCreate(&dbExpiresDictType,NULL);
         server.db[j].expires_cursor = 0;
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
@@ -3467,7 +3490,11 @@ void initServer(void) {
     initRockPipeAndRockRead();
 
     // eviction
-    evictKeyPoolAlloc(); /* Initialize the LRU keys pool. */
+    evictKeyPoolAlloc(); /* Initialize the LRU keys for string pool. */
+    evictHashPoolAlloc();  /* Initialize the LRU hash pool. */
+
+    // init 
+    server.evict_hash_candidates = dictCreate(&evictHashCandidatesDictType,NULL);
 }
 
 /* Some steps in server initialization need to be done last (after modules

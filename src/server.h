@@ -1012,7 +1012,7 @@ struct sharedObjectsStruct {
     *bulkhdr[OBJ_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
     sds minstring, maxstring;
     robj *keyRockVal;    /* special shared object indicating the value saved for key (right now type is String) in rocksdb */
-    sds  fieldRockVal;  /* special shared object indicating the value saved for field of hash type in rocksdb */
+    sds  hashRockVal;  /* special shared object indicating the value saved for field of hash type in rocksdb */
 };
 
 /* ZSETs use a specialized version of Skiplists */
@@ -1663,6 +1663,8 @@ struct redisServer {
     uint64_t    streamCurrentClientId;  /* right now stream client id. NOTE: may be virtual client ID */
 
     unsigned long long bunnymem;   /* Max number of memory bytes to use, at most is the size of all keys */
+
+    dict *evict_hash_candidates;    /* evict hash candidates for all dbs */
 };
 
 client* lookupStreamCurrentClient();
@@ -1786,7 +1788,8 @@ extern dictType zsetDictType;
 extern dictType clusterNodesDictType;
 extern dictType clusterNodesBlackListDictType;
 extern dictType dbDictType;
-extern dictType keyLruType;
+extern dictType keyLruDictType;
+extern dictType evictHashCandidatesDictType;
 extern dictType shaScriptObjectDictType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
@@ -2502,6 +2505,7 @@ size_t getSlaveKeyWithExpireCount(void);
 /* evict.c -- maxmemory handling and LRU eviction. */
 void evictionPoolAlloc(void);
 void evictKeyPoolAlloc(void);
+void evictHashPoolAlloc(void);
 #define LFU_INIT_VAL 5
 unsigned long LFUGetTimeInMinutes(void);
 uint8_t LFULogIncr(uint8_t value);

@@ -5,6 +5,10 @@
 
 #define EVPOOL_SIZE 16
 #define EVPOOL_CACHED_SDS_SIZE 255
+
+#define EVICT_TYPE_STRING   1
+#define EVICT_TYPE_HASH     2
+
 struct evictKeyPoolEntry {
     unsigned long long idle;    /* Object idle time (inverse frequency for LFU) */
     sds key;                    /* Key name. */
@@ -14,14 +18,29 @@ struct evictKeyPoolEntry {
 
 static struct evictKeyPoolEntry *EvictKeyPool;
 
+struct evictHashPoolEntry {
+    unsigned long long idle;
+    sds field;
+    sds cached_field;     /* Cached SDS object for field. */
+    sds key;
+    sds cached_key;       /* Cached SDS object for key. */
+    int dbid;
+};
 
-/* Create a new eviction pool. */
+struct evictHashLruAndRockStat {
+    dict* lru_dict;
+    long long rock_cnt;
+    sds key;
+};
+
+static struct evictHashPoolEntry *EvictHashPool;
+
+/* Create a new eviction pool for string. */
 void evictKeyPoolAlloc(void) {
     struct evictKeyPoolEntry *ep;
-    int j;
 
     ep = zmalloc(sizeof(*ep)*EVPOOL_SIZE);
-    for (j = 0; j < EVPOOL_SIZE; j++) {
+    for (int j = 0; j < EVPOOL_SIZE; j++) {
         ep[j].idle = 0;
         ep[j].key = NULL;
         ep[j].cached = sdsnewlen(NULL,EVPOOL_CACHED_SDS_SIZE);
@@ -30,15 +49,37 @@ void evictKeyPoolAlloc(void) {
     EvictKeyPool = ep;
 }
 
+/* Create a new eviction pool for hash. */
+void evictHashPoolAlloc(void) {
+    struct evictHashPoolEntry *ep;
+
+    ep = zmalloc(sizeof(*ep)*EVPOOL_SIZE);
+    for (int j = 0; j < EVPOOL_SIZE; j++) {
+        ep[j].idle = 0;
+        ep[j].key = NULL;
+        ep[j].field = NULL;
+        ep[j].cached_field = sdsnewlen(NULL,EVPOOL_CACHED_SDS_SIZE);
+        ep[j].cached_key = sdsnewlen(NULL,EVPOOL_CACHED_SDS_SIZE);
+        ep[j].dbid = 0;
+    }
+    EvictHashPool = ep;
+}
+
 static void _dictRehashStep(dict *d) {
     if (d->pauserehash == 0) dictRehash(d,1);
 }
 
-/* We randomly select some keys which ty[e is OBJ_STRING of OBJ_ENCODING_RAW and not shared object */
-static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru, 
-                                                dictEntry **des, 
-                                                dictEntry **lru_des, 
-                                                unsigned int count) {    
+/* We randomly select some keys which ty[e is 
+ * if type == EVICT_TYPE_STRING: OBJ_STRING of OBJ_ENCODING_RAW or OBJ_ENCODING_EMBSTR. No shared object 
+ * if type == EVICT_TYPE_HASH: OBJ_HASH of OBJ_ENCODING_HASH. No shared object 
+ * not other evict type */
+static unsigned int dictGetSomeKeysOfStringOrHashType(int evict_type,
+                                                      dict *d, dict *lru, 
+                                                      dictEntry **des, 
+                                                      dictEntry **lru_des, 
+                                                      unsigned int count) {   
+    serverAssert(evict_type == EVICT_TYPE_STRING || evict_type == EVICT_TYPE_HASH);                                                
+
     if (dictSize(d) < count) count = dictSize(d);
     unsigned long maxsteps = count*10;
 
@@ -104,14 +145,26 @@ static unsigned int dictGetSomeKeysOfStringType(dict *d, dict *lru,
                      * empty while iterating. */
                     robj *o = he->v.val;
                     serverAssert(o);
-                    if (o->type == OBJ_STRING && 
-                        (o->encoding == OBJ_ENCODING_RAW || o->encoding == OBJ_ENCODING_EMBSTR) && 
-                        o->refcount != OBJ_SHARED_REFCOUNT) {
-                        *des = he;
-                        *lru_des = lru_he;
-                        des++;
-                        lru_des++;
-                        stored++;
+                    if (evict_type == EVICT_TYPE_STRING) {
+                        if (o->type == OBJ_STRING && 
+                            (o->encoding == OBJ_ENCODING_RAW || o->encoding == OBJ_ENCODING_EMBSTR) && 
+                            o->refcount != OBJ_SHARED_REFCOUNT) {
+                            *des = he;
+                            *lru_des = lru_he;
+                            des++;
+                            lru_des++;
+                            stored++;
+                        }
+                    } else {
+                        if (o->type == OBJ_HASH && 
+                            (o->encoding == OBJ_ENCODING_HT) && 
+                            o->refcount != OBJ_SHARED_REFCOUNT) {
+                            *des = he;
+                            *lru_des = lru_he;
+                            des++;
+                            lru_des++;
+                            stored++;
+                        }
                     }
 
                     he = he->next;
@@ -143,7 +196,8 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
 
     dictEntry *samples[server.maxmemory_samples];
     dictEntry *lru_samples[server.maxmemory_samples];
-    int count = dictGetSomeKeysOfStringType(sampledict, lru_dict, samples, lru_samples, server.maxmemory_samples);
+    int count = dictGetSomeKeysOfStringOrHashType(EVICT_TYPE_STRING, sampledict, lru_dict, samples, 
+                                                  lru_samples, server.maxmemory_samples);
 
     int j, k;
     unsigned long long idle;
@@ -212,6 +266,98 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
     }
 }
 
+/* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
+static void evictHashPoolPopulate(int dbid, sds key, 
+                                  dict *sampledict, dict *lru_dict, struct evictHashPoolEntry *pool) {
+
+    dictEntry *samples[server.maxmemory_samples];
+    dictEntry *lru_samples[server.maxmemory_samples];
+    int count = dictGetSomeKeysOfStringOrHashType(EVICT_TYPE_HASH, sampledict, lru_dict, samples, 
+                                                  lru_samples, server.maxmemory_samples);
+
+    int j, k;
+    unsigned long long idle;
+    sds field;
+    // sds keyWithField;
+    dictEntry *de;
+    dictEntry *lru_de;
+    sds cached_field;
+    sds cached_key;
+    for (j = 0; j < count; j++) {
+        de = samples[j];
+        lru_de = lru_samples[j];
+        field = dictGetKey(de);
+
+        idle = estimateObjectIdleTimeFromLruDictEntry(lru_de);
+
+        /* Insert the element inside the pool.
+         * First, find the first empty bucket or the first populated
+         * bucket that has an idle time smaller than our idle time. */
+        k = 0;
+        while (k < EVPOOL_SIZE &&
+               pool[k].field &&
+               pool[k].idle < idle) k++;
+        if (k == 0 && pool[EVPOOL_SIZE-1].field != NULL) {
+            /* Can't insert if the element is < the worst element we have
+             * and there are no empty buckets. */
+            continue;
+        } else if (k < EVPOOL_SIZE && pool[k].field == NULL) {
+            /* Inserting into empty position. No setup needed before insert. */
+        } else {
+            /* Inserting in the middle. Now k points to the first element
+             * greater than the element to insert.  */
+            if (pool[EVPOOL_SIZE-1].field == NULL) {
+                /* Free space on the right? Insert at k shifting
+                 * all the elements from k to end to the right. */
+
+                /* Save SDS before overwriting. */
+                cached_field = pool[EVPOOL_SIZE-1].cached_field;
+                cached_key = pool[EVPOOL_SIZE-1].cached_key;
+                memmove(pool+k+1,pool+k,
+                        sizeof(pool[0])*(EVPOOL_SIZE-k-1));
+                pool[k].cached_field = cached_field;
+                pool[k].cached_key = cached_key;
+            } else {
+                /* No free space on right? Insert at k-1 */
+                k--;
+                /* Shift all elements on the left of k (included) to the
+                 * left, so we discard the element with smaller idle time. */
+                cached_field = pool[0].cached_field;
+                cached_key = pool[0].cached_key; /* Save SDS before overwriting. */
+                if (pool[0].field != pool[0].cached_field) sdsfree(pool[0].field);
+                if (pool[0].key != pool[0].cached_key) sdsfree(pool[0].key);
+                memmove(pool,pool+1,sizeof(pool[0])*k);
+                pool[k].cached_field = cached_field;
+                pool[k].cached_key = cached_key;
+            }
+        }
+
+        /* Try to reuse the cached SDS string allocated in the pool entry,
+         * because allocating and deallocating this object is costly
+         * (according to the profiler, not my fantasy. Remember:
+         * premature optimization bla bla bla. */
+        int field_klen = sdslen(field);
+        if (field_klen > EVPOOL_CACHED_SDS_SIZE) {
+            pool[k].field = sdsdup(field);
+        } else {
+            memcpy(pool[k].cached_field,field,field_klen+1);
+            sdssetlen(pool[k].cached_field,field_klen);
+            pool[k].field = pool[k].cached_field;
+        }
+        int key_klen = sdslen(key);
+        if (key_klen > EVPOOL_CACHED_SDS_SIZE) {
+            pool[k].key = sdsdup(key);
+        } else {
+            memcpy(pool[k].cached_key,key,key_klen+1);
+            sdssetlen(pool[k].cached_key,key_klen);
+            pool[k].key = pool[k].cached_key;
+        }
+
+        pool[k].idle = idle;
+        pool[k].dbid = dbid;
+    }
+}
+
 static int getRockKeyOfStringPercentage() {
     long long keyCnt = 0;
     long long rockCnt = 0;
@@ -226,7 +372,7 @@ static int getRockKeyOfStringPercentage() {
     return keyCnt == 0 ? 100 :(int)((long long)100 * rockCnt / keyCnt);    
 }
 
-/* return EVICT_ROCK_OK if no need to eviction value or evict enough value 
+/* return EVICT_ROCK_OK if no need to eviction value or evict enough memory 
  * return EVICT_ROCK_PERCENTAGE if the percentage of string key with value in RocksDB of total string key is too high
  * return EVICT_FAIL_TIMEOUT if timeout and not enought memory has been released 
  * If must_od is ture, we ignore the memory over limit check */
@@ -263,6 +409,7 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
     int timeout = 0;
     monotime evictionTimer;
     elapsedStart(&evictionTimer);
+    struct evictKeyPoolEntry *pool = EvictKeyPool;
 
     while (mem_freed < (long long)mem_tofree) {
         int k, i;
@@ -274,7 +421,7 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
         dict *dict;
         dictEntry *de;
 
-        struct evictKeyPoolEntry *pool = EvictKeyPool;
+        // struct evictKeyPoolEntry *pool = EvictKeyPool;
 
         int fail_cnt = 0;
         unsigned long total_keys, keys;
@@ -299,6 +446,7 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
             /* Go backward from best to worst element to evict. */
             for (k = EVPOOL_SIZE-1; k >= 0; k--) {
                 if (pool[k].key == NULL) continue;
+
                 bestdbid = pool[k].dbid;
 
                 dict = server.db[pool[k].dbid].dict;
@@ -355,6 +503,169 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
 
     return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_OK;
 }
+
+/* return EVICT_ROCK_OK if no need to eviction value or evict enough memory 
+ * return EVICT_ROCK_PERCENTAGE if the percentage of hassh with value in RocksDB of total string key is too high
+ * return EVICT_FAIL_TIMEOUT if timeout and not enought memory has been released 
+ * If must_od is ture, we ignore the memory over limit check */
+int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
+    int keys_freed = 0;
+    size_t mem_tofree;
+    long long mem_freed; /* May be negative */
+    long long delta;
+
+    size_t used = zmalloc_used_memory();
+    if (!must_do && used <= server.bunnymem)
+        return EVICT_OK;        // used memory not over limit and not must_do
+
+    // Check the percentage of RockKey vs total key. 
+    // We do not need to waste time for high percentage of rock keys, e.g. 98%, 
+    // because mostly it will be timeout for no evicting enough memory
+    /*
+    int rock_key_percentage = getRockKeyOfStringPercentage();
+    if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
+        return EVICT_ROCK_PERCENTAGE; 
+    }
+    */
+
+    if (must_do) {
+        if (used >= server.bunnymem) {
+            mem_tofree = used - server.bunnymem > must_tofree ? used - server.bunnymem : must_tofree;
+        } else {
+            mem_tofree = must_tofree;
+        }
+    } else {
+        serverAssert(used > server.bunnymem);
+        mem_tofree = used - server.bunnymem;
+    }
+
+    mem_freed = 0;
+    int timeout = 0;
+    monotime evictionTimer;
+    elapsedStart(&evictionTimer);
+    struct evictHashPoolEntry *pool = EvictHashPool;
+
+    while (mem_freed < (long long)mem_tofree) {
+        int k;
+        sds bestfield = NULL;
+        sds bestkeyWithField = NULL;
+        int bestdbid = -1;
+        sds valstrsds;
+        // redisDb *db;
+        // dict *lru_dict;
+
+        // dict *dict_of_db;
+        dictEntry *de_of_db;
+        dict *dict_of_hash;
+        dictEntry *de_of_hash;
+
+        int fail_cnt = 0;
+        unsigned long total_keys, keys;
+        while(bestfield == NULL && fail_cnt < 100) {
+            total_keys = 0;
+
+            /* We don't want to make local-db choices when expiring fields,
+             * so to start populate the eviction pool sampling keys from
+             * every evict_hash_candidates for all dbs. */
+            dictIterator *di_candidates;
+            dictEntry *de_candidates;
+            di_candidates = dictGetIterator(server.evict_hash_candidates);
+            while ((de_candidates = dictNext(di_candidates))) {
+                sds dbid_with_key = dictGetKey(de_candidates);
+                serverAssert(dbid_with_key && sdslen(dbid_with_key) > 1);
+                uint8_t dbid = dbid_with_key[0];
+                serverAssert(dbid < server.dbnum);
+                struct evictHashLruAndRockStat *evict_hasss_lru_and_rock_stat = dictGetVal(de_candidates);
+                serverAssert(evict_hasss_lru_and_rock_stat);
+
+                sds db_hash_key = evict_hasss_lru_and_rock_stat->key;
+                dictEntry *de_in_db = dictFind(server.db[dbid].dict, db_hash_key);
+                serverAssert(de_in_db);
+                dict *sample_dict = dictGetVal(de_in_db);                 
+                
+                dict *hash_lru = evict_hasss_lru_and_rock_stat->lru_dict;
+
+                if ((keys = dictSize(hash_lru)) != 0) {
+                    evictHashPoolPopulate(dbid, db_hash_key, sample_dict, hash_lru, pool);
+                    total_keys += keys;
+                }
+            }
+            dictReleaseIterator(di_candidates);
+            if (!total_keys) break; /* No keys to evict. */
+
+            /* Go backward from best to worst element to evict. */
+            for (k = EVPOOL_SIZE-1; k >= 0; k--) {
+                if (pool[k].field == NULL) {
+                    bestfield = NULL;
+                    continue;
+                }
+
+                bestdbid = pool[k].dbid;
+                bestfield = pool[k].field;
+                bestkeyWithField = pool[k].key;
+
+                de_of_hash = NULL;
+                de_of_db = dictFind(server.db[bestdbid].dict, bestkeyWithField);
+                if (de_of_db) {
+                    robj *o = dictGetVal(de_of_db);
+                    if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
+                        dict_of_hash = o->ptr;
+                        de_of_hash = dictFind(dict_of_hash, bestfield);
+                    }
+                }
+
+                /* Remove the entry from the pool. */
+                if (pool[k].field != pool[k].cached_field)
+                    sdsfree(pool[k].field);
+                if (pool[k].key != pool[k].cached_key)
+                    sdsfree(pool[k].key);
+                pool[k].field = NULL;
+                pool[k].key = NULL;
+                pool[k].dbid = -1;
+                pool[k].idle = 0;
+
+                /* If the key exists, is our pick. Otherwise it is
+                 * a ghost and we need to try the next element. */
+                /* What is the situation for ghost? */
+                /* The pool's element has previous value which could be changed, */
+                /*     e.g. DEL and change anotther type */
+                /* These kinds of elements in the pool  which are not string type */
+                /*     or value has been saved to Rocksdb are Ghost */
+                if (de_of_hash) {
+                    valstrsds = (sds)dictGetVal(de_of_hash);
+                    if (valstrsds == shared.hashRockVal) 
+                        bestfield = NULL;   // ghost
+                } else {
+                    bestfield = NULL;   // ghost
+                }
+                if (bestfield) break;
+            }
+            if (bestfield == NULL) ++fail_cnt;
+        }
+
+        /* Finally convert value of the selected key and write it to RocksDB write queue */
+        if (bestfield) {
+            delta = (long long) zmalloc_used_memory();
+            dictSetVal(dict_of_hash, de_of_hash, shared.hashRockVal);
+            // ++db->stat_key_str_rockval_cnt;
+            // addRockWriteTaskOfString(bestdbid, bestkey, valstrobj->ptr);
+            // decrRefCount(valstrobj);
+            sdsfree(valstrsds);
+            delta -= (long long) zmalloc_used_memory();
+            mem_freed += delta;
+            keys_freed++;
+        } 
+
+        if (elapsedMs(evictionTimer) >= 2) {        // at most 2-3 ms for eviction
+            if (mem_freed < (long long)mem_tofree)
+                timeout = 1;
+            break;
+        }
+    }
+
+    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_OK;
+}
+
 
 void debugReportMemAndKey() {
     size_t used = zmalloc_used_memory();
