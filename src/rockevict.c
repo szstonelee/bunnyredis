@@ -5,9 +5,12 @@
 
 #define EVPOOL_SIZE 16
 #define EVPOOL_CACHED_SDS_SIZE 255
+#define EVICT_CANDIDATES_CACHED_SDS_SIZE 255
 
 #define EVICT_TYPE_STRING   1
 #define EVICT_TYPE_HASH     2
+
+#define EVICT_HASH_CANDIDATES_MAX_SIZE  2
 
 struct evictKeyPoolEntry {
     unsigned long long idle;    /* Object idle time (inverse frequency for LFU) */
@@ -27,13 +30,20 @@ struct evictHashPoolEntry {
     int dbid;
 };
 
-struct evictHashLruAndRockStat {
-    dict* lru_dict;
-    long long rock_cnt;
-    sds key;
+dictType fieldLruDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    NULL,                       /* key destructor */
+    NULL,                       /* val destructor */
+    dictExpandAllowed           /* allow to expand */
 };
 
 static struct evictHashPoolEntry *EvictHashPool;
+/* used for cache the combined key for memory performance 
+ * check combine_dbid_key() and free_combine_dbid_key() for more details */
+static sds cached_combined_dbid_key = NULL;        
 
 /* Create a new eviction pool for string. */
 void evictKeyPoolAlloc(void) {
@@ -575,7 +585,7 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
                 serverAssert(dbid_with_key && sdslen(dbid_with_key) > 1);
                 uint8_t dbid = dbid_with_key[0];
                 serverAssert(dbid < server.dbnum);
-                struct evictHashLruAndRockStat *evict_hasss_lru_and_rock_stat = dictGetVal(de_candidates);
+                evictHash *evict_hasss_lru_and_rock_stat = dictGetVal(de_candidates);
                 serverAssert(evict_hasss_lru_and_rock_stat);
 
                 sds db_hash_key = evict_hasss_lru_and_rock_stat->key;
@@ -583,10 +593,10 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
                 serverAssert(de_in_db);
                 dict *sample_dict = dictGetVal(de_in_db);                 
                 
-                dict *hash_lru = evict_hasss_lru_and_rock_stat->lru_dict;
+                dict *field_lru = evict_hasss_lru_and_rock_stat->field_lru;
 
-                if ((keys = dictSize(hash_lru)) != 0) {
-                    evictHashPoolPopulate(dbid, db_hash_key, sample_dict, hash_lru, pool);
+                if ((keys = dictSize(field_lru)) != 0) {
+                    evictHashPoolPopulate(dbid, db_hash_key, sample_dict, field_lru, pool);
                     total_keys += keys;
                 }
             }
@@ -783,5 +793,292 @@ void cronEvictToMakeRoom() {
         over_pencentage_cnt = over_pencentage_cnt % 128;        // if Hz 50, so 2 seconds report once
         if (over_pencentage_cnt == 0)
             serverLog(LL_WARNING, "getRockKeyOfStringPercentage() over limit of percentage = %d%%", ROCK_KEY_UPPER_PERCENTAGE);
+    }
+}
+
+/* This will allocate a new resource for combined key of dbid and key.
+ * The caller needs to sdsfree() the resource */
+sds combine_dbid_key_by_alloc(const uint8_t dbid, const sds key) {
+    sds combined;
+        
+    combined = sdsnewlen(&dbid, sizeof(uint8_t));
+    combined = sdscatlen(combined, key, sdslen(key));
+
+    return combined;
+}
+
+/* combined dbid and key. It is for hash type eviction usage 
+ * NOTE: It may use new allocated resource or just cached resource.
+ *       The caller must call free_combine_dbid_key() to deal with the resource */
+sds combine_dbid_key(const uint8_t dbid, const sds key) {
+    if (cached_combined_dbid_key == NULL)
+        cached_combined_dbid_key = sdsnewlen(NULL, EVICT_CANDIDATES_CACHED_SDS_SIZE);
+
+    size_t key_len =  sdslen(key);
+    if (sizeof(uint8_t) + key_len <= EVICT_CANDIDATES_CACHED_SDS_SIZE) {
+        // use cached memory
+        cached_combined_dbid_key[0] = dbid;
+        memcpy(cached_combined_dbid_key+1, key, key_len+1);
+        sdssetlen(cached_combined_dbid_key, 1+key_len);
+
+        return cached_combined_dbid_key;
+    } else {
+        // use allocated memory
+        return combine_dbid_key_by_alloc(dbid, key);
+    }
+}
+
+void free_combine_dbid_key(sds to_free) {
+    if (to_free != cached_combined_dbid_key)
+        sdsfree(to_free);
+}
+
+/* find evictHash in server.evict_hash_candidates 
+ * If not found return NULL. We use cached for memory because hash evict call it frequently */
+evictHash* lookupEvictOfHash(uint8_t dbid, sds key) {
+    sds combined = combine_dbid_key(dbid, key);
+    dictEntry* de = dictFind(server.evict_hash_candidates, combined);
+    free_combine_dbid_key(combined);
+
+    evictHash *evict_hash = NULL;
+    if (de) {
+        evict_hash = dictGetVal(de);
+        serverAssert(evict_hash);
+        // for debug check
+        serverAssert(dictSize(evict_hash->dict_hash) == dictSize(evict_hash->field_lru));
+    }
+    return evict_hash;
+}
+
+static dictEntry* findSmallestHashCandidate() {
+    // We only check when server.evict_hash_candidates is full
+    serverAssert(dictSize(server.evict_hash_candidates) == EVICT_HASH_CANDIDATES_MAX_SIZE);
+
+    dictEntry *smallest = NULL;
+    size_t smallest_sz = UINT64_MAX;
+    dictIterator *di = dictGetIterator(server.evict_hash_candidates);
+    dictEntry *de;
+    while ((de = dictNext(di))) {
+        evictHash *evict_hash = dictGetVal(de);
+        size_t current_sz = dictSize(evict_hash->dict_hash);
+        if (current_sz < smallest_sz) {
+            smallest_sz = current_sz;
+            smallest = de;
+        }
+    }
+    dictReleaseIterator(di);
+    return smallest;
+}
+
+/* Success remove return 1. otherwise return 0 
+ * reference constructInserted() to see how release memory 
+ * NOTE: 
+ *      if input parameter combined_key is the same of the internal, does not free. The caller need to do this */
+int removeHashCandidate(sds combined_key) {
+    dictEntry *de = dictFind(server.evict_hash_candidates, combined_key);
+    if (!de) 
+        return 0;
+
+    // clear memory
+    evictHash *evict_hash = dictGetVal(de);
+    sds internal_combined = dictGetKey(de);
+
+    serverLog(LL_WARNING, "removeHashCandidate for key = %s", evict_hash->key);
+
+    // key in field_lru does not need to free because the owner is the hash dict itself, i.e., evict_hash->dict
+    dictRelease(evict_hash->field_lru);    
+    sdsfree(evict_hash->key);
+    zfree(evict_hash);
+
+    // the matched internal combined_key as key of evict_hash_candidates can not be freed by itself 
+    // becasue internal combined key may be the same address as combined_key which can leed corruption. 
+    // Check dict.c dictGenericDelete() and server.c evictHashCandidatesDictType for more details
+    dictDelete(server.evict_hash_candidates, combined_key);
+    if (combined_key != internal_combined)
+        sdsfree(internal_combined);    
+
+    return 1; 
+}
+
+/* allocate an evictHash for inserted. dict is the hash dictionary */
+static evictHash* constructInserted(const sds key, dict *dict) {
+    evictHash *inserted = zmalloc(sizeof(*inserted));
+    inserted->key = sdsdup(key);
+    inserted->dict_hash = dict;
+
+    long long rock_cnt = 0;
+    inserted->field_lru = dictCreate(&fieldLruDictType, NULL);
+    dictIterator *di = dictGetIterator(dict);
+    dictEntry *de;
+    while((de = dictNext(di))) {
+        sds val = dictGetVal(de);
+        if (val == shared.hashRockVal) 
+            ++rock_cnt;
+
+        sds field = dictGetKey(de);     // we share the same sds object of field with the hash dict
+        uint64_t clock = LRU_CLOCK();
+        // initialize lru is right now for every field, so they may be a little different (good for eviction pick)
+        dictAdd(inserted->field_lru, field, (void*)clock);  
+    }
+    inserted->rock_cnt = rock_cnt;
+    dictReleaseIterator(di);
+
+    return inserted;
+}
+
+static int addToHashCandidatesIfPossible(const uint8_t dbid, const sds key, dict *dict) {
+    // NOTE: combined_key can not use cached memory, because it will be free by removeHashCandidate() 
+    sds combined_key = combine_dbid_key_by_alloc(dbid, key);   
+    serverAssert(dictFind(server.evict_hash_candidates, combined_key) == NULL);
+
+    if (dictSize(server.evict_hash_candidates) < EVICT_HASH_CANDIDATES_MAX_SIZE) {
+        // there is room, just inserted
+        evictHash *inserted = constructInserted(key, dict);
+        dictAdd(server.evict_hash_candidates, combined_key, inserted);
+        return 1;
+    } else {
+        // no room
+        dictEntry *smallest = findSmallestHashCandidate();
+        serverAssert(smallest);
+        sds smallest_combined = dictGetKey(smallest);
+        evictHash *smallest_evic_hash = dictGetVal(smallest);
+        if (dictSize(smallest_evic_hash->dict_hash) >= dictSize(dict)) {
+            // no need to insert because the smallest in server.evict_hash_candidates has more fields
+            sdsfree(combined_key);
+            return 0;
+        } else {
+            int ret = removeHashCandidate(smallest_combined);
+            sdsfree(smallest_combined);     // because it is from the interal of smallests
+            serverAssert(ret);
+            evictHash *inserted = constructInserted(key, dict);
+            dictAdd(server.evict_hash_candidates, combined_key, inserted);
+            return 1;
+        }
+    }
+}
+
+/* We check whether need to add to server.evict_hash_candiddates 
+ * check is from getEvictOfHash() by the caller. 
+ * Because server.evict_hash_candiddates has a bounded size, i.e., EVICT_HASH_CANDIDATES_MAX_SIZE
+ * and insert or remove is expensive,
+ * we check for an interval when added is just over a CHECK_INTERVAL. 
+ * For example, if we set CHECK_INTERVAL == 1000, when dict is added, we see the following results
+ *     dict size == 1000, added = 1. check candidates
+ *     dict size == 1001, added = 1. no check
+ *     dict size == 2001, added = 2. check candidates
+ *     dict size == 1999, added = 999. no check 
+ * RETURN: if added to candidates, return 1. otherwise 0 */
+#define CHECK_INTERVAL 2
+int checkAddToEvictHashCandidates(const uint8_t dbid, const size_t added, sds key, dict *dict) {
+    if (added == 0) return 0;
+    
+    size_t now = dictSize(dict);
+    serverAssert(now >= added);
+    size_t before = now - added;
+
+    if (now/CHECK_INTERVAL != before/CHECK_INTERVAL) {
+        return addToHashCandidatesIfPossible(dbid, key, dict);
+    } else {
+        return 0;   // now added for over CHECK_INTERVAL, no check
+    }    
+}
+
+/* because flush db use simple remove dict code, we need to clear all resource relating to rock */
+void clearEvictByEmptyDb(uint8_t dbid) {
+    serverAssert(dbid < server.dbnum);
+
+    // clear rock stat and lru for such db
+    // but we do not need do anything becuase stat and key_lrus are in struct of redisDb
+    // check dictEmpty() and _dictClear() for more details
+
+    // find the candidates in evict_hash_candidates
+    while (1) {
+        sds found = NULL;
+
+        dictIterator *di;
+        dictEntry *de;
+        di = dictGetIterator(server.evict_hash_candidates);
+        while ((de = dictNext(di))) {
+            sds combined = dictGetKey(de);
+            if (combined[0] == dbid) {
+                found = combined;
+                break;
+            }
+        }
+        dictReleaseIterator(di);
+
+        if (found) {
+            removeHashCandidate(found);
+            sdsfree(found);     // because found is the internal combined key
+        } else {
+            break;
+        }
+    }
+}
+
+/* the object is the obj in db->dict */
+void updateHashLru(uint8_t dbid, sds key, sds field) {
+    redisDb *db = server.db+dbid;
+    dictEntry *de = dictFind(db->dict, key);
+    if (!de) return;
+    
+    robj *o = dictGetVal(de);
+    evictHash* evict_hash 
+        = o->encoding == OBJ_ENCODING_HT ? lookupEvictOfHash(dbid, key) : NULL;
+    if (evict_hash) {
+        dict *lru = evict_hash->field_lru;
+        dictEntry *de = dictFind(lru, field);
+        if (de) {
+            serverLog(LL_WARNING, "update hash lru for key = %s, field = %s", key, field);
+            uint64_t clock = LRU_CLOCK();
+            dictGetVal(de) = (void *)clock;
+        }
+    }
+}
+
+/* field maybe in lru or not */
+void setForHashLru(uint8_t dbid, sds key, sds field) {
+    redisDb *db = server.db+dbid;
+    dictEntry *de = dictFind(db->dict, key);
+    if (!de) return;
+
+    robj *o = dictGetVal(de);
+    evictHash* evict_hash 
+        = o->encoding == OBJ_ENCODING_HT ? lookupEvictOfHash(dbid, key) : NULL;
+    if (evict_hash) {
+        dict *lru = evict_hash->field_lru;
+        uint64_t clock = LRU_CLOCK();
+        dictEntry *de = dictFind(lru, field);
+        if (!de) {
+            // if field not exists, insert to lru
+            dictAdd(lru, field, (void *)clock);
+        } else {
+            // only need to update the lru for existed field
+            dictGetVal(de) = (void *)clock;
+        }
+    }
+}
+
+/* update all lru for the dbid if in candiates */
+void updateHashLruForKey(uint8_t dbid, sds key) {
+    redisDb *db = server.db+dbid;
+    dictEntry *de_in_db = dictFind(db->dict, key);
+    if (!de_in_db) return;
+
+    robj *o = dictGetVal(de_in_db);
+    evictHash* evict_hash 
+        = o->encoding == OBJ_ENCODING_HT ? lookupEvictOfHash(dbid, key) : NULL;
+    if (evict_hash) {
+        uint64_t clock = LRU_CLOCK();
+        dict *lru = evict_hash->field_lru;
+        dictIterator *di;
+        dictEntry *de;
+        di = dictGetIterator(lru);
+        while ((de = dictNext(di))) {
+            sds field = dictGetKey(de);
+            serverLog(LL_WARNING, "update hash lru (all) for key = %s, field = %s", key, field);
+            dictGetVal(de) = (void *)clock;
+        }
+        dictReleaseIterator(di);
     }
 }

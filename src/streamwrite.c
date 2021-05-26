@@ -963,7 +963,7 @@ static client *processNoExecCommandForStreamWrite(uint8_t node_id, uint64_t clie
     if (c != server.virtual_client) {
         serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
         serverAssert(strcasecmp(c->argv[0]->ptr, command) == 0);
-        serverAssert((size_t)c->argc == 1 + listLength(args));
+        serverAssert((size_t)c->argc == 1 + (args ? listLength(args) : 0));
 
         c->streamWriting = STREAM_WRITE_FINISH;
 
@@ -1117,7 +1117,7 @@ void try_to_execute_stream_commands() {
         // NOTE2: processNoExecCommandForStreamWrite() or processExecCommandForStreamWrite() 
         //        maybe call back, so we need it out of lock to aovid lock reentry.
         if (!is_exec_msg) {
-            serverAssert(command && no_exec_args);
+            serverAssert(command);
             c = processNoExecCommandForStreamWrite(node_id, client_id, dbid, command, no_exec_args);
         } else {
             serverAssert(exec_cmds && exec_args);            

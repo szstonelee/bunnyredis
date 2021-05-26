@@ -1638,13 +1638,13 @@ dictType clientIdDictType = {
     NULL                        /* allow to expand */
 };
 
-/* value is an pointer to object of. NOTE: not accurately */
+/* value is an pointer to object of struct evictHash */
 dictType evictHashCandidatesDictType = {
-    dictSdsCaseHash,            /* hash function */
+    dictSdsHash,                /* hash function */
     NULL,                       /* key dup */
     NULL,                       /* val dup */
-    dictSdsKeyCaseCompare,      /* key compare */
-    dictSdsDestructor,          /* key destructor */
+    dictSdsKeyCompare,          /* key compare */
+    NULL,                       /* key destructor. NOTE: need to be NULL */
     NULL,                       /* val destructor */
     NULL                        /* allow to expand */
 };

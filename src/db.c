@@ -30,6 +30,7 @@
 #include "server.h"
 #include "cluster.h"
 #include "atomicvar.h"
+#include "rockevict.h"
 
 #include <signal.h>
 #include <ctype.h>
@@ -238,17 +239,26 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
 
     serverAssertWithInfo(NULL,key,de != NULL);
     dictEntry auxentry = *de;
+
+    // deal with evict hash candidates and cnt
     robj *old = dictGetVal(de);
+    // if set overwrite old wich is not String type, we need incr the cnt
+    if (old->type != OBJ_STRING) ++db->stat_key_str_cnt;
     if (old->type == OBJ_STRING) {
         serverAssert(db->stat_key_str_cnt);
-        // --db->stat_key_str_cnt;
         if (old == shared.keyRockVal) {
             // we can not overwirte the old value which is keyRockVal with keyRockVal
             serverAssert(val != shared.keyRockVal);      
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
         }
+    } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_HT) {
+        // the old hash maybe in server.evict_hash_candidates
+        sds combined = combine_dbid_key(db->id, key->ptr);
+        removeHashCandidate(combined);
+        free_combine_dbid_key(combined);
     }
+
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
         val->lru = old->lru;
     }
@@ -477,6 +487,14 @@ long long emptyDb(int dbnum, int flags, void(callback)(void*)) {
 
     /* Empty redis database structure. */
     removed = emptyDbStructure(server.db, dbnum, async, callback);
+
+    if (dbnum == -1) {
+        for (uint8_t dbid = 0; dbid < server.dbnum; ++dbid)
+            clearEvictByEmptyDb(dbid);
+    } else {
+        uint8_t dbid = (uint8_t)dbnum;
+        clearEvictByEmptyDb(dbid);
+    }
 
     /* Flush slots to keys map if enable cluster, we can flush entire
      * slots to keys map whatever dbnum because only support one DB
@@ -718,6 +736,26 @@ void delGenericCommand(client *c, int lazy) {
     int numdel = 0, j;
 
     for (j = 1; j < c->argc; j++) {
+        // try to remove the evict hash candidates
+        sds key = c->argv[j]->ptr;
+        sds combined = combine_dbid_key(c->db->id, key);
+        removeHashCandidate(combined);
+        free_combine_dbid_key(combined);
+
+        // check the cnt for string
+        dictEntry *de = dictFind(c->db->dict, key);
+        if (de) {
+            robj *o = dictGetVal(de);
+            if (o->type == OBJ_STRING) {
+                if (o == shared.keyRockVal) {
+                    serverAssert(c->db->stat_key_str_rockval_cnt);
+                    --c->db->stat_key_str_rockval_cnt;
+                }
+                serverAssert(c->db->stat_key_str_cnt);
+                --c->db->stat_key_str_cnt;
+            }
+        }
+
         expireIfNeeded(c->db,c->argv[j]);
         int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
                               dbSyncDelete(c->db,c->argv[j]);
