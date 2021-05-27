@@ -159,11 +159,11 @@ def _main():
     common_kvs = {"abc":"val_abc", "kkk":"val_kkk"}
 
     pool = redis.ConnectionPool(host=ip,
-                             port=port,
-                             db=db,
-                             decode_responses=True,
-                             encoding='utf-8',
-                             socket_connect_timeout=2)
+                                port=port,
+                                db=db,
+                                decode_responses=True,
+                                encoding='utf-8',
+                                socket_connect_timeout=2)
     r = redis.StrictRedis(connection_pool=pool)
 
     # test get

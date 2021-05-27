@@ -2160,6 +2160,7 @@ void processInputBuffer(client *c) {
             }
 
             // NOTE: for test of injecting lots of keys, you can commout out the following code and then enbale it again
+            /*
             if (checkMemInProcessBuffer(c) != C_OK) {
                 int evict_res = performKeyOfStringEvictions(0, 0);    // try to free memory
                 if (evict_res == EVICT_ROCK_TIMEOUT) {
@@ -2178,6 +2179,8 @@ void processInputBuffer(client *c) {
                     continue;
                 }
             }
+            */
+            
 
             // check and set streamWriting
             // If check_stream_res is C_ERR, we can pass through to processCommandAndResetClient()

@@ -10,7 +10,7 @@
 #define EVICT_TYPE_STRING   1
 #define EVICT_TYPE_HASH     2
 
-#define EVICT_HASH_CANDIDATES_MAX_SIZE  2
+#define EVICT_HASH_CANDIDATES_MAX_SIZE  8
 
 struct evictKeyPoolEntry {
     unsigned long long idle;    /* Object idle time (inverse frequency for LFU) */
@@ -82,7 +82,9 @@ static void _dictRehashStep(dict *d) {
 /* We randomly select some keys which ty[e is 
  * if type == EVICT_TYPE_STRING: OBJ_STRING of OBJ_ENCODING_RAW or OBJ_ENCODING_EMBSTR. No shared object 
  * if type == EVICT_TYPE_HASH: OBJ_HASH of OBJ_ENCODING_HASH. No shared object 
- * not other evict type */
+ * not other evict type 
+ * NOTE: if type == EVICT_TYPE_HASH, the d of dict is the hash dict: 
+ *       key is sds string of field, values is sds string of val */
 static unsigned int dictGetSomeKeysOfStringOrHashType(int evict_type,
                                                       dict *d, dict *lru, 
                                                       dictEntry **des, 
@@ -148,14 +150,14 @@ static unsigned int dictGetSomeKeysOfStringOrHashType(int evict_type,
                 emptylen = 0;
                 dictEntry *lru_he;
                 while (he) {
-                    sds key = dictGetKey(he);
-                    lru_he = dictFind(lru, key);
-                    serverAssert(lru_he);
-                    /* Collect all the elements of the buckets found non
-                     * empty while iterating. */
-                    robj *o = he->v.val;
-                    serverAssert(o);
                     if (evict_type == EVICT_TYPE_STRING) {
+                        sds key = dictGetKey(he);
+                        lru_he = dictFind(lru, key);
+                        serverAssert(lru_he);
+                        /* Collect all the elements of the buckets found non
+                        * empty while iterating. */
+                        robj *o = he->v.val;
+                        serverAssert(o);
                         if (o->type == OBJ_STRING && 
                             (o->encoding == OBJ_ENCODING_RAW || o->encoding == OBJ_ENCODING_EMBSTR) && 
                             o->refcount != OBJ_SHARED_REFCOUNT) {
@@ -166,11 +168,13 @@ static unsigned int dictGetSomeKeysOfStringOrHashType(int evict_type,
                             stored++;
                         }
                     } else {
-                        if (o->type == OBJ_HASH && 
-                            (o->encoding == OBJ_ENCODING_HT) && 
-                            o->refcount != OBJ_SHARED_REFCOUNT) {
+                        sds field = dictGetKey(he);                        
+                        lru_he = dictFind(lru, field);
+                        serverAssert(lru_he);
+                        sds val = dictGetVal(he);
+                        if (val != shared.hashRockVal) {
                             *des = he;
-                            *lru_des = lru_he;
+                            *lru_des =lru_he;
                             des++;
                             lru_des++;
                             stored++;
@@ -202,12 +206,14 @@ static unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de) 
 }
 
 /* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
-static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, struct evictKeyPoolEntry *pool) {
+static size_t evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, struct evictKeyPoolEntry *pool) {
 
     dictEntry *samples[server.maxmemory_samples];
     dictEntry *lru_samples[server.maxmemory_samples];
     int count = dictGetSomeKeysOfStringOrHashType(EVICT_TYPE_STRING, sampledict, lru_dict, samples, 
                                                   lru_samples, server.maxmemory_samples);
+
+    size_t insert_cnt = 0;
 
     int j, k;
     unsigned long long idle;
@@ -257,6 +263,7 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
                 memmove(pool,pool+1,sizeof(pool[0])*k);
                 pool[k].cached = cached;
             }
+            ++insert_cnt;
         }
 
         /* Try to reuse the cached SDS string allocated in the pool entry,
@@ -274,16 +281,21 @@ static void evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, str
         pool[k].idle = idle;
         pool[k].dbid = dbid;
     }
+
+    return insert_cnt;
 }
 
-/* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
-static void evictHashPoolPopulate(int dbid, sds key, 
+/* NOTE1: does not like evict.c similiar function, we do not evict anything from TTL dict 
+ * NOTE2: sampledict is the hash dict that key is sds of field and value is sds value (NOT robj*) */
+static size_t evictHashPoolPopulate(int dbid, sds key, 
                                   dict *sampledict, dict *lru_dict, struct evictHashPoolEntry *pool) {
 
     dictEntry *samples[server.maxmemory_samples];
     dictEntry *lru_samples[server.maxmemory_samples];
     int count = dictGetSomeKeysOfStringOrHashType(EVICT_TYPE_HASH, sampledict, lru_dict, samples, 
                                                   lru_samples, server.maxmemory_samples);
+
+    size_t insert_cnt = 0;
 
     int j, k;
     unsigned long long idle;
@@ -340,6 +352,7 @@ static void evictHashPoolPopulate(int dbid, sds key,
                 pool[k].cached_field = cached_field;
                 pool[k].cached_key = cached_key;
             }
+            insert_cnt++;
         }
 
         /* Try to reuse the cached SDS string allocated in the pool entry,
@@ -366,6 +379,8 @@ static void evictHashPoolPopulate(int dbid, sds key,
         pool[k].idle = idle;
         pool[k].dbid = dbid;
     }
+
+    return insert_cnt;
 }
 
 static int getRockKeyOfStringPercentage() {
@@ -434,7 +449,8 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
         // struct evictKeyPoolEntry *pool = EvictKeyPool;
 
         int fail_cnt = 0;
-        unsigned long total_keys, keys;
+        // unsigned long total_keys, keys;
+        unsigned long total_keys;
         while(bestkey == NULL && fail_cnt < 100) {
             total_keys = 0;
 
@@ -445,13 +461,17 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
                 db = server.db+i;
                 dict = db->dict;
                 lru_dict = db->key_lrus;
+                size_t rock_cnt = db->stat_key_str_rockval_cnt;
 
-                if ((keys = dictSize(dict)) != 0) {
-                    evictKeyPoolPopulate(i, dict, lru_dict, pool);
-                    total_keys += keys;
+                size_t dict_cnt = dictSize(dict);
+                if (dict_cnt != 0 && dict_cnt != rock_cnt) {
+                    size_t insert_cnt = evictKeyPoolPopulate(i, dict, lru_dict, pool);
+                    total_keys += insert_cnt;
                 }
             }
-            if (!total_keys) break; /* No keys to evict. */
+
+            /* No insert keys and pool is empty skip evict. */
+            if (total_keys == 0 && pool[0].key == NULL) break; 
 
             /* Go backward from best to worst element to evict. */
             for (k = EVPOOL_SIZE-1; k >= 0; k--) {
@@ -570,7 +590,8 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
         dictEntry *de_of_hash;
 
         int fail_cnt = 0;
-        unsigned long total_keys, keys;
+        // unsigned long total_keys, keys;
+        unsigned long total_keys;
         while(bestfield == NULL && fail_cnt < 100) {
             total_keys = 0;
 
@@ -581,27 +602,35 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
             dictEntry *de_candidates;
             di_candidates = dictGetIterator(server.evict_hash_candidates);
             while ((de_candidates = dictNext(di_candidates))) {
-                sds dbid_with_key = dictGetKey(de_candidates);
-                serverAssert(dbid_with_key && sdslen(dbid_with_key) > 1);
-                uint8_t dbid = dbid_with_key[0];
-                serverAssert(dbid < server.dbnum);
-                evictHash *evict_hasss_lru_and_rock_stat = dictGetVal(de_candidates);
-                serverAssert(evict_hasss_lru_and_rock_stat);
+                // sds dbid_with_key = dictGetKey(de_candidates);
+                // serverAssert(dbid_with_key && sdslen(dbid_with_key) > 1);
+                // uint8_t dbid = dbid_with_key[0];
+                // serverAssert(dbid < server.dbnum);
+                evictHash *evict_hash = dictGetVal(de_candidates);
+                serverAssert(evict_hash);
+                sds combined = dictGetKey(de_candidates);
 
-                sds db_hash_key = evict_hasss_lru_and_rock_stat->key;
-                dictEntry *de_in_db = dictFind(server.db[dbid].dict, db_hash_key);
-                serverAssert(de_in_db);
-                dict *sample_dict = dictGetVal(de_in_db);                 
+                // sds db_hash_key = evict_hasss_lru_and_rock_stat->key;
+                // dictEntry *de_in_db = dictFind(server.db[dbid].dict, db_hash_key);
+                // serverAssert(de_in_db);
+                // dict *sample_dict = dictGetVal(de_in_db);                 
                 
-                dict *field_lru = evict_hasss_lru_and_rock_stat->field_lru;
+                uint8_t dbid = combined[0];
+                sds db_key = evict_hash->key;
+                dict *sample_dict = evict_hash->dict_hash;
+                dict *field_lru = evict_hash->field_lru;
+                size_t rock_cur_cnt = evict_hash->rock_cnt;
 
-                if ((keys = dictSize(field_lru)) != 0) {
-                    evictHashPoolPopulate(dbid, db_hash_key, sample_dict, field_lru, pool);
-                    total_keys += keys;
+                size_t sample_cnt = dictSize(sample_dict);
+                if (sample_cnt != 0 && sample_cnt != rock_cur_cnt) {
+                    size_t inserted_cnt = evictHashPoolPopulate(dbid, db_key, sample_dict, field_lru, pool);
+                    total_keys += inserted_cnt;
                 }
             }
             dictReleaseIterator(di_candidates);
-            if (!total_keys) break; /* No keys to evict. */
+
+            /* No insert keys and pool is empty, skip to evict. */
+            if (total_keys == 0 && pool[0].field == NULL) break; 
 
             /* Go backward from best to worst element to evict. */
             for (k = EVPOOL_SIZE-1; k >= 0; k--) {
@@ -657,9 +686,12 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
         if (bestfield) {
             delta = (long long) zmalloc_used_memory();
             dictSetVal(dict_of_hash, de_of_hash, shared.hashRockVal);
-            // ++db->stat_key_str_rockval_cnt;
+            // update stat if possible
+            evictHash *evict_hash = lookupEvictOfHash(bestdbid, bestkeyWithField);
+            if (evict_hash) {
+                ++evict_hash->rock_cnt;
+            }
             // addRockWriteTaskOfString(bestdbid, bestkey, valstrobj->ptr);
-            // decrRefCount(valstrobj);
             sdsfree(valstrsds);
             delta -= (long long) zmalloc_used_memory();
             mem_freed += delta;
@@ -677,7 +709,7 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
 }
 
 
-void debugReportMemAndKey() {
+static void debugReportMemAndKey() {
     size_t used = zmalloc_used_memory();
     size_t mem_tofree = 0;
     if (used > server.bunnymem)
@@ -713,12 +745,38 @@ void debugReportMemAndKey() {
     }
 }
 
+static void debugReportMemAndHash() {
+    size_t used = zmalloc_used_memory();
+    size_t mem_tofree = 0;
+    if (used > server.bunnymem)
+        mem_tofree = used - server.bunnymem;
+
+    serverLog(LL_WARNING, "to free = %zu, used = %zu, bunnymem = %llu", mem_tofree, used, server.bunnymem);
+
+    dictIterator *di;
+    dictEntry *de;
+    di = dictGetIterator(server.evict_hash_candidates);
+    while ((de = dictNext(di))) {
+        evictHash *evict_hash = dictGetVal(de);
+        sds combined = dictGetKey(de);
+
+        uint8_t dbid = combined[0];
+        sds key = evict_hash->key;
+        long long rock_cnt = evict_hash->rock_cnt;
+        dict *dict_hash = evict_hash->dict_hash;
+        dict *dict_lru = evict_hash->field_lru;
+
+        serverLog(LL_WARNING, "hash candidates, dbid = %u, key = %s, field cnt = %lu, lru cnt = %lu, rock cnt = %lld",
+            dbid, key, dictSize(dict_hash), dictSize(dict_lru), rock_cnt);
+    }
+    dictReleaseIterator(di);
+}
+
 void debugEvictCommand(client *c) {
     sds flag = c->argv[1]->ptr;
 
-    if (strcasecmp(flag, "evict") == 0) {
-        serverLog(LL_WARNING, "debugEvictCommand() has been called!");
-
+    if (strcasecmp(flag, "evictkey") == 0) {
+        serverLog(LL_WARNING, "debugEvictCommand() for key has been called!");
         serverLog(LL_WARNING, "===== before evcition ===========");
         debugReportMemAndKey();
         serverLog(LL_WARNING, "===== after evcition ===========");
@@ -727,8 +785,20 @@ void debugEvictCommand(client *c) {
             res == EVICT_ROCK_OK ? "EVICT_ROCK_OK" : 
                                    (res == EVICT_ROCK_PERCENTAGE ? "EVICT_ROCK_PERCENTAGE" : "EVICT_ROCK_TIMEOUT"));
         debugReportMemAndKey();
-    } else if (strcasecmp(flag, "report") == 0) {
+    } else if (strcasecmp(flag, "evicthash") == 0) {
+        serverLog(LL_WARNING, "debugEvictCommand() for hash has been called!");
+        serverLog(LL_WARNING, "===== before evcition ===========");
+        debugReportMemAndHash();
+        serverLog(LL_WARNING, "===== after evcition ===========");
+        int res = performKeyOfHashEvictions(0, 0);
+        serverLog(LL_WARNING, "performKeyOfHashEvictions() res = %s", 
+            res == EVICT_ROCK_OK ? "EVICT_ROCK_OK" : 
+                                   (res == EVICT_ROCK_PERCENTAGE ? "EVICT_ROCK_PERCENTAGE" : "EVICT_ROCK_TIMEOUT"));
+        debugReportMemAndHash();
+    } else if (strcasecmp(flag, "reportkey") == 0) {
         debugReportMemAndKey();
+    } else if (strcasecmp(flag, "reporthash") == 0) {
+        debugReportMemAndHash();
     } else {
         addReplyError(c, "wrong flag for debugevict!");
         return;
@@ -776,6 +846,9 @@ int checkMemInProcessBuffer(client *c) {
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
 void cronEvictToMakeRoom() {
+    // debug 
+    return;
+
     size_t used_mem = zmalloc_used_memory();
     size_t limit_mem = server.bunnymem;
 
@@ -968,7 +1041,7 @@ static int addToHashCandidatesIfPossible(const uint8_t dbid, const sds key, dict
  *     dict size == 2001, added = 2. check candidates
  *     dict size == 1999, added = 999. no check 
  * RETURN: if added to candidates, return 1. otherwise 0 */
-#define CHECK_INTERVAL 2
+#define CHECK_INTERVAL 128
 int checkAddToEvictHashCandidates(const uint8_t dbid, const size_t added, sds key, dict *dict) {
     if (added == 0) return 0;
     
@@ -1029,7 +1102,7 @@ void updateHashLru(uint8_t dbid, sds key, sds field) {
         dict *lru = evict_hash->field_lru;
         dictEntry *de = dictFind(lru, field);
         if (de) {
-            serverLog(LL_WARNING, "update hash lru for key = %s, field = %s", key, field);
+            // serverLog(LL_WARNING, "update hash lru for key = %s, field = %s", key, field);
             uint64_t clock = LRU_CLOCK();
             dictGetVal(de) = (void *)clock;
         }
@@ -1075,8 +1148,8 @@ void updateHashLruForKey(uint8_t dbid, sds key) {
         dictEntry *de;
         di = dictGetIterator(lru);
         while ((de = dictNext(di))) {
-            sds field = dictGetKey(de);
-            serverLog(LL_WARNING, "update hash lru (all) for key = %s, field = %s", key, field);
+            // sds field = dictGetKey(de);
+            // serverLog(LL_WARNING, "update hash lru (all) for key = %s, field = %s", key, field);
             dictGetVal(de) = (void *)clock;
         }
         dictReleaseIterator(di);
