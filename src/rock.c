@@ -2,6 +2,7 @@
 #include "server.h"
 #include "rock.h"
 #include "streamwrite.h"
+#include "rockevict.h"
 
 #include "assert.h"
 #include <rocksdb/c.h>
@@ -16,10 +17,32 @@
 #define ROCK_WRITE_QUEUE_TOO_LONG   64
 #define ROCK_WRITE_PICK_MAX_LEN     1024
 
+// Below is spin lock support
 // spin lock only run in Linux
 static pthread_spinlock_t readLock;     
 static pthread_spinlock_t writeLock;
 
+static void lockRockRead() {
+    int res = pthread_spin_lock(&readLock);
+    serverAssert(res == 0);
+}
+
+static void unlockRockRead() {
+    int res = pthread_spin_unlock(&readLock);
+    serverAssert(res == 0);
+}
+
+static void lockRockWrite() {
+    int res = pthread_spin_lock(&writeLock);
+    serverAssert(res == 0);
+}
+
+static void unlockRockWrite() {
+    int res = pthread_spin_unlock(&writeLock);
+    serverAssert(res == 0);
+}
+
+// below is stream data structure
 rocksdb_t *rockdb = NULL;
 // const char bunny_rockdb_path[] = "/tmp/bunnyrocksdb";
 
@@ -79,26 +102,6 @@ size_t on_fly_task_cnt;        // how may task for the read thraed to do
 sds on_fly_rock_keys[MAX_READ_TASK_NUM];
 sds on_fly_vals[MAX_READ_TASK_NUM];        // if first element is NULL, it means no return values
 sds val_not_found;
-
-static void lockRockRead() {
-    int res = pthread_spin_lock(&readLock);
-    serverAssert(res == 0);
-}
-
-static void unlockRockRead() {
-    int res = pthread_spin_unlock(&readLock);
-    serverAssert(res == 0);
-}
-
-static void lockRockWrite() {
-    int res = pthread_spin_lock(&writeLock);
-    serverAssert(res == 0);
-}
-
-static void unlockRockWrite() {
-    int res = pthread_spin_unlock(&writeLock);
-    serverAssert(res == 0);
-}
 
 // reference https://github.com/facebook/rocksdb/wiki/Memory-usage-in-RocksDB
 static void report_rocksdb_mem_usage() {
@@ -166,8 +169,10 @@ void debugRockCommand(client *c) {
         ++c->db->stat_key_str_rockval_cnt;
         addRockWriteTaskOfString(c->db->id, key->ptr, val->ptr);
         decrRefCount(val);
+
     } else if (strcasecmp(flag, "mem") == 0) {
         report_rocksdb_mem_usage();
+
     } else {
         addReplyError(c, "wrong flag for debugrock!");
         return;
@@ -258,20 +263,22 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
 
 /* allocate memory resouce by return sds */
 sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key) {
+    // we need allocate new memory for rock_key, 
+    // because it may be transfered the owner to async-read_rock_key_candidates
     sds rock_key;
-
     uint8_t type = ROCK_STRING_TYPE;
     rock_key = sdsnewlen(&type, 1);
     rock_key = sdscatlen(rock_key, &dbid, 1);
     rock_key = sdscatlen(rock_key, string_key, sdslen(string_key));
-
     return rock_key;
 }
 
-/* allocate memory resouce by return sds */
+/* allocate memory resouce by return sds 
+ * for hash, the rock_key has one more property as field */
 sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field) {
+    // we need allocate new memory for rock_key
+    // because it may be transfered the owner to async-read_rock_key_candidates
     sds rock_key;
-
     uint8_t type = ROCK_HASH_TYPE;
     rock_key = sdsnewlen(&type, 1);
     rock_key = sdscatlen(rock_key, &dbid, 1);
@@ -279,7 +286,6 @@ sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field)
     rock_key = sdscatlen(rock_key, &key_len, sizeof(key_len));
     rock_key = sdscatlen(rock_key, key, sdslen(key));
     rock_key = sdscatlen(rock_key, field, sdslen(field));
-
     return rock_key;
 }
 
@@ -305,7 +311,7 @@ void addRockWriteTaskOfString(const uint8_t dbid, sds const key, sds const val) 
     struct WriteTask *task;
 
     // the resource will be reclaimed in pickWriteTasksInWriteThread()
-    task = zmalloc(sizeof(struct WriteTask));
+    task = zmalloc(sizeof(*task));
     rock_key = encode_rock_key_for_string(dbid, key);
     copy_val = sdsdup(val);
 
@@ -322,7 +328,7 @@ void addRockWriteTaskOfHash(const uint8_t dbid, sds const key, sds const field, 
     struct WriteTask *task;
     
     // the resource will be reclaimed in pickWriteTasksInWriteThread()
-    task = zmalloc(sizeof(struct WriteTask));
+    task = zmalloc(sizeof(*task));
     rock_key = encode_rock_key_for_hash(dbid, key, field);
     copy_val = sdsdup(val);
 
@@ -732,6 +738,28 @@ static void* entryInReadThread(void *arg) {
     return NULL;
 }
 
+/* NOTE: will allocate memory for *hash_key and *hash_field even it is zero-length
+ * About the encode, check encode_rock_key_for_hash() */
+static void decodeKeyToHashKeyAndHashField(sds const key, sds *hash_key, sds *hash_field) {
+    size_t key_len = sdslen(key);
+    size_t cnt = 0;
+    char const *p = key;
+
+    uint32_t hash_key_len = intrev32ifbe(*((uint32_t*)p));
+    cnt += sizeof(uint32_t);
+    p += sizeof(uint32_t);
+    serverAssert(cnt <= key_len);
+    serverAssert(cnt + hash_key_len <= key_len);
+
+    sds allocate_key = sdsnewlen(p, hash_key_len);
+    p += hash_key_len;
+    cnt += hash_key_len;
+    sds allocate_field = sdsnewlen(p, key_len-cnt);
+
+    *hash_key = allocate_key;
+    *hash_field = allocate_field;
+}
+
 /* Recover the shared. to the real value */
 static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, sds const val) {
     if (type == ROCK_STRING_TYPE) {
@@ -745,13 +773,49 @@ static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, s
             exit(1);
         }
         robj *recover = createStringObject(val, sdslen(val));
-        dictSetVal(dict, de, recover);
+        // dictSetVal(dict, de, recover);
+        dictGetVal(de) = recover;
         serverAssert(db->stat_key_str_rockval_cnt);
         --db->stat_key_str_rockval_cnt;
+
     } else {
-        // TODO: type == ROCK_HASH_TYPE
-        serverLog(LL_WARNING, "recover_val() has not supported ROCK_HASH_TYPE");
-        exit(1);
+        serverAssert(type == ROCK_HASH_TYPE);
+        // decode the combined key to hash_key and hash_field
+        sds hash_key, hash_field;
+        decodeKeyToHashKeyAndHashField(key, &hash_key, &hash_field);
+
+        // find the object in db
+        redisDb *db = server.db+dbid;
+        dict *dict_db = db->dict;
+        dictEntry *de_db = dictFind(dict_db, hash_key);
+        serverAssert(de_db);
+        robj *o = dictGetVal(de_db);
+        if (o->type != OBJ_HASH && o->encoding != OBJ_ENCODING_HT) {
+            serverLog(LL_WARNING, "recover_val() found the object is not right hash, key = %s", hash_key);
+            exit(1);
+        }
+
+        // find the de in hash and recover
+        dict *dict_hash = o->ptr;
+        dictEntry *de_hash = dictFind(dict_hash, hash_field);
+        serverAssert(de_hash);
+        if (dictGetVal(de_hash) != shared.hashRockVal) {
+            serverLog(LL_WARNING, "recover_val(), the val of hash is not shared.hashRockVal, key = %s, field = %s, val = %s",
+                      hash_key, hash_field, (sds)dictGetVal(de_hash));
+            exit(1);
+        }
+        sds recover = sdsdup(val);
+        dictGetVal(de_hash) = recover;
+
+        // update the stat if possible because server.evict_hash_candidates maybe change
+        evictHash *evict_hash = lookupEvictOfHash(dbid, hash_key);
+        if (evict_hash) {
+            serverAssert(evict_hash->rock_cnt > 0);
+            --evict_hash->rock_cnt;
+        }
+
+        sdsfree(hash_key);
+        sdsfree(hash_field);
     }
 }
 
@@ -808,7 +872,7 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
         recover_val(type, dbid, sds_key, val);
         sdsfree(sds_key);
 
-        // deal with stream_wait_rock_keys and read_rock_key_candidates and eclaim the resource in them
+        // deal with stream_wait_rock_keys and read_rock_key_candidates and reclaim the resource in them
         dictDelete(stream_wait_rock_keys, rock_key);        // rock_key maybe in stream_wait_rock_keys or not
         dictEntry *de = dictFind(read_rock_key_candidates, rock_key);
         serverAssert(de);

@@ -594,7 +594,7 @@ struct redisCommand redisCommandTable[] = {
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hget",NULL,0,hgetCommand,3,
+    {"hget",hgetCmdForRock,0,hgetCommand,3,
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 

@@ -19,7 +19,7 @@ typedef struct evictHash {
 int dictExpandAllowed(size_t moreMem, double usedRatio);
 
 // API
-evictHash* lookupEvictOfHash(uint8_t dbid, sds key);
+evictHash* lookupEvictOfHash(const uint8_t dbid, sds key);
 int checkMemInProcessBuffer(client *c);
 void debugEvictCommand(client *c);
 int performKeyOfStringEvictions(int must_do, size_t must_tofree);

@@ -8,11 +8,11 @@ def generate_field_val(field_lower_num, field_upper_num):
     mp = {}
     dice_num = random.randint(field_lower_num, field_upper_num)
     for _ in range(0, dice_num):
-        # dice_field_len = random.randint(1, 300)
-        dice_field_len = random.randint(3, 8)
+        dice_field_len = random.randint(1, 300)
+        # dice_field_len = random.randint(3, 8)
         field = random.choice(string.ascii_letters) * dice_field_len
-        # dice_val_len = random.randint(200, 2048)
-        dice_val_len = random.randint(20, 40)
+        dice_val_len = random.randint(200, 2048)
+        # dice_val_len = random.randint(20, 40)
         val = str(random.randint(0, 9)) * dice_val_len
         mp[field] = val
     return mp
@@ -44,7 +44,8 @@ def print_hash(redis_hash: dict):
 
 def test_hset(r, redis_hash):
     for k, fv in redis_hash.items():
-        r.hset(name=k, mapping=fv)
+        for f, v in fv.items():
+            r.hset(name=k, key=f, value=v)
 
 
 def test_hgetall(r, redis_hash):

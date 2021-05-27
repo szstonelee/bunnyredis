@@ -29,6 +29,8 @@
 
 #include "server.h"
 #include "rockevict.h"
+#include "rock.h"
+
 #include <math.h>
 
 /*-----------------------------------------------------------------------------
@@ -865,6 +867,32 @@ void hgetCommand(client *c) {
     updateHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 
     addHashFieldToReply(c, o, c->argv[2]->ptr);
+}
+
+list* hgetCmdForRock(client *c) {
+    uint8_t dbid = c->db->id;
+    redisDb *db = server.db + dbid;
+    dict *dict_db = db->dict;
+    sds key = c->argv[1]->ptr;    
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+
+    robj *o = dictGetVal(de_db);
+    if (!o) return NULL;
+    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
+
+    dict *dict_hash = o->ptr;
+    sds field = c->argv[2]->ptr;
+    dictEntry *de_hash = dictFind(dict_hash, field);
+    if (!de_hash) return NULL;
+
+    sds val = dictGetVal(de_hash);
+    if (val != shared.hashRockVal) return NULL;
+
+    list *rock_keys = listCreate();
+    sds rock_key = encode_rock_key_for_hash(dbid, key, field);
+    listAddNodeTail(rock_keys, rock_key);
+    return rock_keys;    
 }
 
 void hmgetCommand(client *c) {

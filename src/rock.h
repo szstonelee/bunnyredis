@@ -24,5 +24,6 @@ sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field)
 list* getCmdForRock(client *c);
 list* appendCmdForRock(client *c);
 list* execCmdForRock(client *c);
+list* hgetCmdForRock(client *c);
 
 #endif

@@ -691,7 +691,7 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
             if (evict_hash) {
                 ++evict_hash->rock_cnt;
             }
-            // addRockWriteTaskOfString(bestdbid, bestkey, valstrobj->ptr);
+            addRockWriteTaskOfHash(bestdbid, bestkeyWithField, bestfield, valstrsds);
             sdsfree(valstrsds);
             delta -= (long long) zmalloc_used_memory();
             mem_freed += delta;
@@ -847,7 +847,7 @@ int checkMemInProcessBuffer(client *c) {
 #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
 void cronEvictToMakeRoom() {
     // debug 
-    return;
+    // return;
 
     size_t used_mem = zmalloc_used_memory();
     size_t limit_mem = server.bunnymem;
@@ -858,7 +858,8 @@ void cronEvictToMakeRoom() {
 
     if (used_mem * 1000 / limit_mem <= 950) return;       // only over 95%, we start to evict
 
-    int res = performKeyOfStringEvictions(1, 1<<20);      // evict at least 1M bytes, server.hz set 50, so 1 second call 50 times
+    // int res = performKeyOfStringEvictions(1, 1<<20);      // evict at least 1M bytes, server.hz set 50, so 1 second call 50 times
+    int res = performKeyOfHashEvictions(1, 1<<20);
 
     static int over_pencentage_cnt = 0;
     if (res == EVICT_ROCK_PERCENTAGE) {
@@ -908,7 +909,7 @@ void free_combine_dbid_key(sds to_free) {
 
 /* find evictHash in server.evict_hash_candidates 
  * If not found return NULL. We use cached for memory because hash evict call it frequently */
-evictHash* lookupEvictOfHash(uint8_t dbid, sds key) {
+evictHash* lookupEvictOfHash(const uint8_t dbid, sds key) {
     sds combined = combine_dbid_key(dbid, key);
     dictEntry* de = dictFind(server.evict_hash_candidates, combined);
     free_combine_dbid_key(combined);
@@ -956,7 +957,7 @@ int removeHashCandidate(sds combined_key) {
     evictHash *evict_hash = dictGetVal(de);
     sds internal_combined = dictGetKey(de);
 
-    serverLog(LL_WARNING, "removeHashCandidate for key = %s", evict_hash->key);
+    // serverLog(LL_WARNING, "removeHashCandidate for key = %s", evict_hash->key);
 
     // key in field_lru does not need to free because the owner is the hash dict itself, i.e., evict_hash->dict
     dictRelease(evict_hash->field_lru);    
@@ -1041,7 +1042,7 @@ static int addToHashCandidatesIfPossible(const uint8_t dbid, const sds key, dict
  *     dict size == 2001, added = 2. check candidates
  *     dict size == 1999, added = 999. no check 
  * RETURN: if added to candidates, return 1. otherwise 0 */
-#define CHECK_INTERVAL 128
+#define CHECK_INTERVAL 8
 int checkAddToEvictHashCandidates(const uint8_t dbid, const size_t added, sds key, dict *dict) {
     if (added == 0) return 0;
     
