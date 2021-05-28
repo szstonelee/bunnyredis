@@ -20,6 +20,7 @@ typedef struct evictHash {
 int dictExpandAllowed(size_t moreMem, double usedRatio);
 
 // API
+unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de);
 evictHash* lookupEvictOfHash(const uint8_t dbid, sds key);
 int checkMemInProcessBuffer(client *c);
 void debugEvictCommand(client *c);

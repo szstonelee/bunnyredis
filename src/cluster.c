@@ -31,6 +31,7 @@
 #include "server.h"
 #include "cluster.h"
 #include "endianconv.h"
+#include "rock.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -5111,6 +5112,10 @@ void dumpCommand(client *c) {
     return;
 }
 
+list* dumpCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 /* RESTORE key ttl serialized-value [REPLACE] */
 void restoreCommand(client *c) {
     long long ttl, lfu_freq = -1, lru_idle = -1, lru_clock = -1;
@@ -5182,6 +5187,11 @@ void restoreCommand(client *c) {
         return;
     }
 
+    // restore command can not support expire, so we reset the parse result
+    // and make the expire argument avoided
+    absttl = 0;
+    ttl = 0;
+
     /* Remove the old key if needed. */
     int deleted = 0;
     if (replace)
@@ -5205,7 +5215,19 @@ void restoreCommand(client *c) {
     if (ttl) {
         setExpire(c,c->db,key,ttl);
     }
+
     objectSetLRUOrLFU(obj,lfu_freq,lru_idle,lru_clock,1000);
+    // We need set lru for db->key_lrus
+    redisDb *db = server.db + c->db->id;
+    dict* dict_lru = db->key_lrus;
+    dictEntry* de_lru = dictFind(dict_lru, key->ptr);
+    serverAssert(de_lru);
+    // reference objectSetLRUOrLFU()
+    long lru_abs = lru_clock - lru_idle;
+    if (lru_abs < 0)
+        lru_abs = (lru_clock+(LRU_CLOCK_MAX/2)) % LRU_CLOCK_MAX;
+    dictGetVal(de_lru) = (void *)lru_abs;
+
     signalModifiedKey(c,c->db,key);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"restore",key,c->db->id);
     addReply(c,shared.ok);

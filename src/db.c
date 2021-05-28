@@ -31,6 +31,7 @@
 #include "cluster.h"
 #include "atomicvar.h"
 #include "rockevict.h"
+#include "rock.h"
 
 #include <signal.h>
 #include <ctype.h>
@@ -74,13 +75,14 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
             } else {
                 unsigned int clock = LRU_CLOCK();
                 val->lru = clock;
+                // When update val lru, we need update the associated lru in db->key_lrus
+                // because the val could be in RocksDB (actualy update the shared object val's lru)
                 dictEntry *lru_de = dictFind(db->key_lrus,key->ptr);
                 if (!lru_de) {
                     serverLog(LL_WARNING, "lookupKey() set lru for key failed, key = %s", (sds)key->ptr);
                     exit(1);
                 }
-                serverAssert(lru_de);
-                lru_de->v.u64 = clock;
+                dictGetVal(lru_de) = (void*)((uint64_t)clock);
             }
         }
         return val;
@@ -351,15 +353,9 @@ int dbSyncDelete(redisDb *db, robj *key) {
     dictEntry *lru_de = dictUnlink(db->key_lrus, key->ptr);
     if (de) {
         serverAssert(lru_de);
+        update_rock_stat_and_try_delete_evict_candidate_for_db_delete(db, de);
+
         robj *val = dictGetVal(de);
-        if (val->type == OBJ_STRING) {
-            serverAssert(db->stat_key_str_cnt);
-            --db->stat_key_str_cnt;
-            if (val == shared.keyRockVal) {
-                serverAssert(db->stat_key_str_rockval_cnt);
-                --db->stat_key_str_rockval_cnt;
-            }
-        }
         /* Tells the module that the key has been unlinked from the database. */
         moduleNotifyKeyUnlink(key,val);
         dictFreeUnlinkedEntry(db->dict,de);
@@ -737,6 +733,7 @@ void delGenericCommand(client *c, int lazy) {
 
     for (j = 1; j < c->argc; j++) {
         // try to remove the evict hash candidates
+        /* NO NEED TO DO, because the following dbAsyncDelete() or dbSyncDelete() will do it 
         sds key = c->argv[j]->ptr;
         sds combined = combine_dbid_key(c->db->id, key);
         removeHashCandidate(combined);
@@ -755,6 +752,7 @@ void delGenericCommand(client *c, int lazy) {
                 --c->db->stat_key_str_cnt;
             }
         }
+        */
 
         expireIfNeeded(c->db,c->argv[j]);
         int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
@@ -1206,8 +1204,16 @@ void renameCommand(client *c) {
     renameGenericCommand(c,0);
 }
 
+list* renameCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 void renamenxCommand(client *c) {
     renameGenericCommand(c,1);
+}
+
+list* renamenxCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void moveCommand(client *c) {
@@ -1270,6 +1276,10 @@ void moveCommand(client *c) {
 
     server.dirty++;
     addReply(c,shared.cone);
+}
+
+list* moveCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void copyCommand(client *c) {
@@ -1372,6 +1382,10 @@ void copyCommand(client *c) {
 
     server.dirty++;
     addReply(c,shared.cone);
+}
+
+list* copyCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 /* Helper function for dbSwapDatabases(): scans the list of keys that have

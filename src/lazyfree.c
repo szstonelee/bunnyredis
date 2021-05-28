@@ -2,6 +2,7 @@
 #include "bio.h"
 #include "atomicvar.h"
 #include "cluster.h"
+#include "rock.h"
 
 static redisAtomic size_t lazyfree_objects = 0;
 static redisAtomic size_t lazyfreed_objects = 0;
@@ -181,15 +182,8 @@ int dbAsyncDelete(redisDb *db, robj *key) {
     /* Release the key-val pair, or just the key if we set the val
      * field to NULL in order to lazy free it later. */
     if (de) {
-        robj *val = dictGetVal(de);
-        if (val->type == OBJ_STRING) {
-            serverAssert(db->stat_key_str_cnt);
-            --db->stat_key_str_cnt;
-            if (val == shared.keyRockVal) {
-                serverAssert(db->stat_key_str_rockval_cnt);
-                --db->stat_key_str_rockval_cnt;
-            }
-        }
+        update_rock_stat_and_try_delete_evict_candidate_for_db_delete(db, de);
+
         dictFreeUnlinkedEntry(db->dict,de);
         dictFreeUnlinkedEntry(db->key_lrus, lru_de);
         if (server.cluster_enabled) slotToKeyDel(key->ptr);        

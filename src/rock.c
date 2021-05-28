@@ -990,3 +990,43 @@ void initRockPipeAndRockRead() {
         serverPanic("Unable to create a rock write thread.");
 }
 
+/* when db delete by sync or async, we need update stat for rock 
+ * 1. if string, update db.rock_stat and string_stat
+ * 2. if hash, try to remove it from evict_hash_candidates  
+ * de is the dict entry of the db which will be delete */
+void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, dictEntry* de) {
+    serverAssert(db && de);
+
+    sds key = dictGetKey(de);
+    robj *o = dictGetVal(de);
+
+    if (o->type == OBJ_STRING) {
+        serverAssert(db->stat_key_str_cnt);
+        --db->stat_key_str_cnt;
+        if (o == shared.keyRockVal) {
+            serverAssert(db->stat_key_str_rockval_cnt);
+            --db->stat_key_str_rockval_cnt;
+        }
+    } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
+        sds combined = combine_dbid_key(db->id, key); 
+        removeHashCandidate(combined);
+        free_combine_dbid_key(combined);
+    }
+}
+
+/* check the index argument of c to form rock_keys list */
+list* genericGetOneKeyForRock(client *c, int index) {
+    uint8_t dbid = c->db->id;
+    dict *dict_db = (server.db+dbid)->dict;
+    sds key = c->argv[index]->ptr;
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+    robj *o = dictGetVal(de_db);
+    if (o->type != OBJ_STRING) return NULL;
+    if (o != shared.keyRockVal) return NULL;
+
+    list *rock_keys = listCreate();
+    sds rock_key = encode_rock_key_for_string(dbid, key);
+    listAddNodeTail(rock_keys, rock_key);
+    return rock_keys;
+}

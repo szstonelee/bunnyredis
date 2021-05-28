@@ -688,36 +688,40 @@ struct redisCommand redisCommandTable[] = {
      "write fast @keyspace @dangerous",
      0,NULL,0,0,0,0,0,0},
 
-    {"move",NULL,1,moveCommand,3,
+    {"move",moveCmdForRock,1,moveCommand,3,
      "write fast @keyspace",
      0,NULL,1,1,1,0,0,0},
 
-    {"copy",NULL,1,copyCommand,-3,
+    {"copy",copyCmdForRock,1,copyCommand,-3,
      "write use-memory @keyspace",
      0,NULL,1,2,1,0,0,0},
 
     /* Like for SET, we can't mark rename as a fast command because
      * overwriting the target key may result in an implicit slow DEL. */
-    {"rename",NULL,1,renameCommand,3,
+    {"rename",renameCmdForRock,1,renameCommand,3,
      "write @keyspace",
      0,NULL,1,2,1,0,0,0},
 
-    {"renamenx",NULL,1,renamenxCommand,3,
+    {"renamenx",renamenxCmdForRock,1,renamenxCommand,3,
      "write fast @keyspace",
      0,NULL,1,2,1,0,0,0},
 
+    // expire is not supported in BunnyRedis
     {"expire",NULL,-1,expireCommand,3,
      "write fast @keyspace",
      0,NULL,1,1,1,0,0,0},
 
+    // expire is not supported in BunnyRedis
     {"expireat",NULL,-1,expireatCommand,3,
      "write fast @keyspace",
      0,NULL,1,1,1,0,0,0},
 
+    // expire is not supported in BunnyRedis
     {"pexpire",NULL,-1,pexpireCommand,3,
      "write fast @keyspace",
      0,NULL,1,1,1,0,0,0},
 
+    // expire is not supported in BunnyRedis
     {"pexpireat",NULL,-1,pexpireatCommand,3,
      "write fast @keyspace",
      0,NULL,1,1,1,0,0,0},
@@ -823,7 +827,8 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast random @keyspace",
      0,NULL,1,1,1,0,0,0},
 
-    {"touch",NULL,1,touchCommand,-2,
+    // NOTE: touch only update the lru of current node
+    {"touch",NULL,0,touchCommand,-2,
      "read-only fast @keyspace",
      0,NULL,1,-1,1,0,0,0},
 
@@ -832,6 +837,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast random @keyspace",
      0,NULL,1,1,1,0,0,0},
 
+    // expire not supported in BunnyRedis
     {"persist",NULL,-1,persistCommand,2,
      "write fast @keyspace",
      0,NULL,1,1,1,0,0,0},
@@ -902,6 +908,7 @@ struct redisCommand redisCommandTable[] = {
     "write use-memory cluster-asking @keyspace @dangerous",
     0,NULL,1,1,1,0,0,0},
 
+    // cluster is not supported in BunnyRedis
     {"migrate",NULL,-1,migrateCommand,-6,
      "write random @keyspace @dangerous",
      0,migrateGetKeys,0,0,0,0,0,0},
@@ -918,11 +925,11 @@ struct redisCommand redisCommandTable[] = {
      "fast @keyspace",
      0,NULL,0,0,0,0,0,0},
 
-    {"dump",NULL,0,dumpCommand,2,
+    {"dump",dumpCmdForRock,0,dumpCommand,2,
      "read-only random @keyspace",
      0,NULL,1,1,1,0,0,0},
 
-    {"object",NULL,0,objectCommand,-2,
+    {"object",objectCmdForRock,0,objectCommand,-2,
      "read-only random @keyspace",
      0,NULL,2,2,1,0,0,0},
 

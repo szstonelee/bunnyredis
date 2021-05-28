@@ -29,6 +29,9 @@
  */
 
 #include "server.h"
+#include "rock.h"
+#include "rockevict.h"
+
 #include <math.h>
 #include <ctype.h>
 
@@ -1273,7 +1276,17 @@ NULL
             addReplyError(c,"An LFU maxmemory policy is selected, idle time not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust.");
             return;
         }
-        addReplyLongLong(c,estimateObjectIdleTime(o)/1000);
+        // NOTE: the lru time is actually recorded in db->lru
+        // addReplyLongLong(c,estimateObjectIdleTime(o)/1000);
+        redisDb *db = server.db+c->db->id;
+        dict *dict_lru = db->key_lrus;
+        sds key = c->argv[2]->ptr;
+        dictEntry *de_lru = dictFind(dict_lru, key);
+        if (!de_lru) {
+            serverLog(LL_WARNING, "objcect command for idletime can not lookup the lru for key = %s", key);
+            exit(1);
+        }
+        addReplyLongLong(c, estimateObjectIdleTimeFromLruDictEntry(de_lru)/1000);
     } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) {
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
                 == NULL) return;
@@ -1288,6 +1301,14 @@ NULL
         addReplyLongLong(c,LFUDecrAndReturn(o));
     } else {
         addReplySubcommandSyntaxError(c);
+    }
+}
+
+list* objectCmdForRock(client *c) {
+    if (c->argc == 3) {
+        return genericGetOneKeyForRock(c, 2);       // object command key is the third argument
+    } else {
+        return NULL;
     }
 }
 

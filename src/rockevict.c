@@ -194,7 +194,7 @@ static unsigned int dictGetSomeKeysOfStringOrHashType(int evict_type,
 /* Given an object returns the min number of milliseconds the object was never
  * requested, using an approximated LRU algorithm. 
  * Refercnet evict.c estimateObjectIdleTime() for more details */
-static unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de) {
+unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de) {
     unsigned long long lruclock = LRU_CLOCK();
     unsigned long long my_lru = de->v.u64;
     if (lruclock >= my_lru) {

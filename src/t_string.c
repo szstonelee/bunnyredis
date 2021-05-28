@@ -33,6 +33,8 @@
 #include "rock.h"
 
 list* stringGenericGetOneKeyForRock(client *c) {
+    return genericGetOneKeyForRock(c, 1);       // always assume the second argument (index == 1)
+    /*
     uint8_t dbid = c->db->id;
     dict *dict_db = (server.db+dbid)->dict;
     sds key = c->argv[1]->ptr;
@@ -46,6 +48,7 @@ list* stringGenericGetOneKeyForRock(client *c) {
     sds rock_key = encode_rock_key_for_string(dbid, key);
     listAddNodeTail(rock_keys, rock_key);
     return rock_keys;
+    */
 }
 
 // assume argv[start_index] to the end are searching keys, step is the jump step for arg
