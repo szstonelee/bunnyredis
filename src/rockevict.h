@@ -3,9 +3,10 @@
 
 #define ROCK_KEY_UPPER_PERCENTAGE 98
 
-#define EVICT_ROCK_OK         0
-#define EVICT_ROCK_PERCENTAGE 1
-#define EVICT_ROCK_TIMEOUT    2
+#define EVICT_ROCK_ENOUGH_MEM      1
+#define EVICT_ROCK_NOT_READY       2
+#define EVICT_ROCK_FREE            3
+#define EVICT_ROCK_TIMEOUT         4
 
 /* stored in dict of server.evict_hash_candidates as value */
 typedef struct evictHash {
@@ -22,7 +23,7 @@ int dictExpandAllowed(size_t moreMem, double usedRatio);
 evictHash* lookupEvictOfHash(const uint8_t dbid, sds key);
 int checkMemInProcessBuffer(client *c);
 void debugEvictCommand(client *c);
-int performKeyOfStringEvictions(int must_do, size_t must_tofree);
+int performeKeyOfStringOrHashEvictions(int must_do, size_t must_tofree);
 void cronEvictToMakeRoom();
 sds combine_dbid_key(const uint8_t dbid, const sds key);
 void free_combine_dbid_key(sds to_free);

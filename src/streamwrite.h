@@ -11,7 +11,12 @@
 #define STREAM_CHECK_GO_ON_NO_ERROR       3     // go on to execute command(including queued the command), check does not found no error
 #define STREAM_CHECK_ACL_FAIL             4     // failed by ACL check, just return
 #define STREAM_CHECK_EMPTY_TRAN           5     // transaction is empty executution
+#define STREAM_CHECK_FORBIDDEN            6     // forbidden by BunnyRedis
 
+// API from t_string.c
+int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type, int from_strem_check);
+
+// API
 void initStreamPipeAndStartConsumer();
 void execVirtualCommand();
 int checkAndSetStreamWriting(client *c);

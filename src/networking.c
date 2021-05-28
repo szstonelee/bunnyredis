@@ -2196,8 +2196,9 @@ void processInputBuffer(client *c) {
             case STREAM_CHECK_EMPTY_TRAN:
                 break;
             case STREAM_CHECK_ACL_FAIL:
+            case STREAM_CHECK_FORBIDDEN:
                 commandProcessed(c);
-                break;
+                continue;
             default:
                 serverLog(LL_WARNING, "checkAndSetStreamWriting() return unknow result!");
                 exit(1);

@@ -300,11 +300,15 @@ static int parse_msg_for_exec(sds msg, uint8_t *node_id, uint64_t *client_id, ui
 
 /* reference server.c processCommand(). The caller is networing.c processInputBuffer()
  * return 
+ *         STREAM_CHECK_FORBIDDEN.   The command is forbidden by BunnyRedis
  *         STREAM_CHECK_GO_ON_NO_ERROR. The caller can go on to execute with rock key check
  *         STREAM_CHECK_GO_ON_WITH_ERROR. The caller can go on without rock key check
  *         STREAM_CHECK_ACL_FAIL. Alreay reply with ACL failed info.
  *         STREAM_CHECK_EMPTY_TRAN. The caller can go on. no need to check rock key and STREAM WAITING STATE
- *         STREAM_CHECK_SET_STREAM. Start the stream phase */
+ *         STREAM_CHECK_SET_STREAM. Start the stream phase 
+ * NOTE: special for set command. If it has expire argument, it will be determined as forbidden */
+#define OBJ_NO_FLAGS 0      // check t_string.c, it is duplicated
+#define COMMAND_SET 1       // check t_string.c, it is duplicated
 int checkAndSetStreamWriting(client *c) {
     // The caller is concrete client and the state is STREAM_WRITE_INIT
     serverAssert(c->streamWriting == STREAM_WRITE_INIT && c != server.virtual_client);
@@ -317,8 +321,39 @@ int checkAndSetStreamWriting(client *c) {
     // command name can not parse 
     if (!cmd) return STREAM_CHECK_GO_ON_WITH_ERROR;
 
-    if (cmd->streamCmdCategory == STREAM_FORBIDDEN_CMD)
-        return STREAM_CHECK_GO_ON_WITH_ERROR;
+    if (cmd->streamCmdCategory == STREAM_FORBIDDEN_CMD) {
+        rejectCommandFormat(c,"BunnyRedis forbids '%s' command", c->argv[0]->ptr);
+        return STREAM_CHECK_FORBIDDEN;
+    }
+
+    // check set command has expire argument
+    if (strcasecmp(c->argv[0]->ptr, "set") == 0) {
+        robj *expire = NULL;
+        int unit = UNIT_SECONDS;
+        int flags = OBJ_NO_FLAGS;
+
+        struct redisCommand *savedCmd = c->cmd;
+        struct redisCommand *savedLastcmd = c->lastcmd;
+        c->cmd = c->lastcmd = cmd;
+
+        int parse_ret = parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_SET, 1);
+        
+        if (parse_ret != C_OK) {
+            c->cmd = savedCmd;
+            c->lastcmd = savedLastcmd;
+            return STREAM_CHECK_GO_ON_WITH_ERROR;
+        }
+    
+        if (expire) {
+            c->cmd = savedCmd;
+            c->lastcmd = savedLastcmd;
+            rejectCommandFormat(c,"BunnyRedis forbids '%s' command partially because the expire arguments", c->argv[0]->ptr);
+            return STREAM_CHECK_FORBIDDEN;
+        }
+
+        c->cmd = savedCmd;
+        c->lastcmd = savedLastcmd;        
+    }
 
     // command basic parameters number is not OK
     if ((cmd->arity > 0 && cmd->arity != c->argc) ||
@@ -353,7 +388,7 @@ int checkAndSetStreamWriting(client *c) {
         case ACL_DENIED_CMD:
             rejectCommandFormat(c,
                 "-NOPERM this user has no permissions to run "
-                "the '%s' command or its subcommand", c->cmd->name);
+                "the '%s' command or its subcommand", c->argv[0]->ptr);
             break;
         case ACL_DENIED_KEY:
             rejectCommandFormat(c,

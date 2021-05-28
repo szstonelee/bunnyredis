@@ -228,11 +228,12 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"getex",NULL,0,getexCommand,-2,
+    // no support for expiration
+    {"getex",NULL,-1,getexCommand,-2,
      "write fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"getdel",NULL,0,getdelCommand,2,
+    {"getdel",getdelCmdForRock,1,getdelCommand,2,
      "write fast @string",
      0,NULL,1,1,1,0,0,0},
 
@@ -242,7 +243,7 @@ struct redisCommand redisCommandTable[] = {
      "write use-memory @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"setnx",NULL,1,setnxCommand,3,
+    {"setnx",setnxCmdForRock,1,setnxCommand,3,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
@@ -258,7 +259,7 @@ struct redisCommand redisCommandTable[] = {
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"strlen",NULL,0,strlenCommand,2,
+    {"strlen",strlenCmdForRock,0,strlenCommand,2,
      "read-only fast @string",
      0,NULL,1,1,1,0,0,0},
 
@@ -274,15 +275,15 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @keyspace",
      0,NULL,1,-1,1,0,0,0},
 
-    {"setbit",NULL,1,setbitCommand,4,
+    {"setbit",setbitCmdForRock,1,setbitCommand,4,
      "write use-memory @bitmap",
      0,NULL,1,1,1,0,0,0},
 
-    {"getbit",NULL,1,getbitCommand,3,
+    {"getbit",getbitCmdForRock,0,getbitCommand,3,
      "read-only fast @bitmap",
      0,NULL,1,1,1,0,0,0},
 
-    {"bitfield",NULL,1,bitfieldCommand,-2,
+    {"bitfield",bitfieldCmdForRock,1,bitfieldCommand,-2,
      "write use-memory @bitmap",
      0,NULL,1,1,1,0,0,0},
 
@@ -290,11 +291,11 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @bitmap",
      0,NULL,1,1,1,0,0,0},
 
-    {"setrange",NULL,1,setrangeCommand,4,
+    {"setrange",setrangeCmdForRock,1,setrangeCommand,4,
      "write use-memory @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"getrange",NULL,0,getrangeCommand,4,
+    {"getrange",getrangeCmdForRock,0,getrangeCommand,4,
      "read-only @string",
      0,NULL,1,1,1,0,0,0},
 
@@ -302,15 +303,15 @@ struct redisCommand redisCommandTable[] = {
      "read-only @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"incr",NULL,1,incrCommand,2,
+    {"incr",incrCmdForRock,1,incrCommand,2,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"decr",NULL,0,decrCommand,2,
+    {"decr",decrCmdForRock,1,decrCommand,2,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"mget",NULL,0,mgetCommand,-2,
+    {"mget",mgetCmdForRock,0,mgetCommand,-2,
      "read-only fast @string",
      0,NULL,1,-1,1,0,0,0},
 
@@ -602,15 +603,15 @@ struct redisCommand redisCommandTable[] = {
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hmget",NULL,1,hmgetCommand,-3,
+    {"hmget",hmgetCmdForRock,1,hmgetCommand,-3,
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hincrby",NULL,1,hincrbyCommand,4,
+    {"hincrby",hincrbyCmdForRock,1,hincrbyCommand,4,
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hincrbyfloat",NULL,1,hincrbyfloatCommand,4,
+    {"hincrbyfloat",hincrbyfloatCmdForRock,1,hincrbyfloatCommand,4,
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
@@ -622,7 +623,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hstrlen",NULL,0,hstrlenCommand,3,
+    {"hstrlen",hstrlenCmdForRock,0,hstrlenCommand,3,
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 
@@ -630,11 +631,11 @@ struct redisCommand redisCommandTable[] = {
      "read-only to-sort @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hvals",NULL,0,hvalsCommand,2,
+    {"hvals",hvalsCmdForRock,0,hvalsCommand,2,
      "read-only to-sort @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hgetall",NULL,0,hgetallCommand,2,
+    {"hgetall",hgetallCmdForRock,0,hgetallCommand,2,
      "read-only random @hash",
      0,NULL,1,1,1,0,0,0},
 
@@ -646,31 +647,32 @@ struct redisCommand redisCommandTable[] = {
      "read-only random @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hscan",NULL,0,hscanCommand,-3,
+    // currently we do not support hscan, because cursor is not fixed
+    {"hscan",NULL,-1,hscanCommand,-3,
      "read-only random @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"incrby",NULL,1,incrbyCommand,3,
+    {"incrby",incrbyCmdForRock,1,incrbyCommand,3,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"decrby",NULL,1,decrbyCommand,3,
+    {"decrby",decrbyCmdForRock,1,decrbyCommand,3,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"incrbyfloat",NULL,1,incrbyfloatCommand,3,
+    {"incrbyfloat",incrbyfloatCmdForRock,1,incrbyfloatCommand,3,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"getset",NULL,1,getsetCommand,3,
+    {"getset",getsetCmdForRock,1,getsetCommand,3,
      "write use-memory fast @string",
      0,NULL,1,1,1,0,0,0},
 
-    {"mset",NULL,1,msetCommand,-3,
+    {"mset",msetCmdForRock,1,msetCommand,-3,
      "write use-memory @string",
      0,NULL,1,-1,2,0,0,0},
 
-    {"msetnx",NULL,1,msetnxCommand,-3,
+    {"msetnx",msetnxCmdForRock,1,msetnxCommand,-3,
      "write use-memory @string",
      0,NULL,1,-1,2,0,0,0},
 
@@ -724,7 +726,8 @@ struct redisCommand redisCommandTable[] = {
      "read-only to-sort @keyspace @dangerous",
      0,NULL,0,0,0,0,0,0},
 
-    {"scan",NULL,1,scanCommand,-2,
+    // current, we do not support scan, because cursor is not fixed
+    {"scan",NULL,-1,scanCommand,-2,
      "read-only random @keyspace",
      0,NULL,0,0,0,0,0,0},
 
@@ -815,7 +818,8 @@ struct redisCommand redisCommandTable[] = {
      "admin no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
-    {"ttl",NULL,-1,ttlCommand,2,
+    // ttl can be used, but always return no expired result
+    {"ttl",NULL,0,ttlCommand,2,
      "read-only fast random @keyspace",
      0,NULL,1,1,1,0,0,0},
 
@@ -823,7 +827,8 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @keyspace",
      0,NULL,1,-1,1,0,0,0},
 
-    {"pttl",NULL,-1,pttlCommand,2,
+    // pttl can be used, but always return no expired result
+    {"pttl",NULL,0,pttlCommand,2,
      "read-only fast random @keyspace",
      0,NULL,1,1,1,0,0,0},
 
@@ -955,15 +960,15 @@ struct redisCommand redisCommandTable[] = {
      "random fast ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
-    {"bitop",NULL,1,bitopCommand,-4,
+    {"bitop",bitopCmdForRock,1,bitopCommand,-4,
      "write use-memory @bitmap",
      0,NULL,2,-1,1,0,0,0},
 
-    {"bitcount",NULL,0,bitcountCommand,-2,
+    {"bitcount",bitcountCmdForRock,0,bitcountCommand,-2,
      "read-only @bitmap",
      0,NULL,1,1,1,0,0,0},
 
-    {"bitpos",NULL,0,bitposCommand,-3,
+    {"bitpos",bitposCmdForRock,0,bitposCommand,-3,
      "read-only @bitmap",
      0,NULL,1,1,1,0,0,0},
 
@@ -4135,11 +4140,13 @@ int processCommand(client *c) {
     }
 
     /* We check forbidden command for BunnyRedis here */
+    /*
     if (c->cmd->streamCmdCategory == STREAM_FORBIDDEN_CMD) {
         rejectCommandFormat(c,"BunnyRedis forbids '%s' command",
             c->cmd->name);
         return C_OK;
     }
+    */
 
     int is_write_command = (c->cmd->flags & CMD_WRITE) ||
                            (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_WRITE));

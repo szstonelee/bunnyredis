@@ -383,6 +383,7 @@ static size_t evictHashPoolPopulate(int dbid, sds key,
     return insert_cnt;
 }
 
+/* if return is bigger than 100, it means keyCnt is zero */
 static int getRockKeyOfStringPercentage() {
     long long keyCnt = 0;
     long long rockCnt = 0;
@@ -394,14 +395,15 @@ static int getRockKeyOfStringPercentage() {
         rockCnt += db->stat_key_str_rockval_cnt;
     }
 
-    return keyCnt == 0 ? 100 :(int)((long long)100 * rockCnt / keyCnt);    
+    return keyCnt == 0 ? 101 :(int)((long long)100 * rockCnt / keyCnt);    
 }
 
-/* return EVICT_ROCK_OK if no need to eviction value or evict enough memory 
- * return EVICT_ROCK_PERCENTAGE if the percentage of string key with value in RocksDB of total string key is too high
- * return EVICT_FAIL_TIMEOUT if timeout and not enought memory has been released 
+/* return EVICT_ROCK_ENOUGH_MEM if no need to eviction value because of enough free memory 
+ * return EVICT_ROCK_NOT_READY if the percentage of string key with value in RocksDB of total string key is too high or zero key
+ * return EVICT_ROCK_FREE    if evict enough memory 
+ * return EVICT_ROCK_TIMEOUT if timeout and not enought memory has been released 
  * If must_od is ture, we ignore the memory over limit check */
-int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
+static int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
     int keys_freed = 0;
     size_t mem_tofree;
     long long mem_freed; /* May be negative */
@@ -409,14 +411,14 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
 
     size_t used = zmalloc_used_memory();
     if (!must_do && used <= server.bunnymem)
-        return EVICT_OK;        // used memory not over limit and not must_do
+        return EVICT_ROCK_ENOUGH_MEM;        // used memory not over limit and not must_do
 
     // Check the percentage of RockKey vs total key. 
     // We do not need to waste time for high percentage of rock keys, e.g. 98%, 
     // because mostly it will be timeout for no evicting enough memory
     int rock_key_percentage = getRockKeyOfStringPercentage();
     if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
-        return EVICT_ROCK_PERCENTAGE; 
+        return EVICT_ROCK_NOT_READY; 
     }
 
     if (must_do) {
@@ -531,14 +533,33 @@ int performKeyOfStringEvictions(int must_do, size_t must_tofree) {
         }
     }
 
-    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_OK;
+    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;
 }
 
-/* return EVICT_ROCK_OK if no need to eviction value or evict enough memory 
- * return EVICT_ROCK_PERCENTAGE if the percentage of hassh with value in RocksDB of total string key is too high
- * return EVICT_FAIL_TIMEOUT if timeout and not enought memory has been released 
+/* if return is bigger than 100, it means fieldCnt is zero */
+static int getRockKeyOfHashPercentage() {
+    long long fieldCnt = 0;
+    long long rockCnt = 0;
+
+    dictIterator *di;
+    dictEntry *de;
+    di = dictGetIterator(server.evict_hash_candidates);
+    while ((de = dictNext(di))) {
+        evictHash *evict_hash = dictGetVal(de);
+        fieldCnt += dictSize(evict_hash->dict_hash);
+        rockCnt += evict_hash->rock_cnt;
+    }
+    dictReleaseIterator(di);
+
+    return fieldCnt == 0 ? 101 :(int)((long long)100 * rockCnt / fieldCnt);    
+}
+
+/* return EVICT_ROCK_ENOUGH_MEM if no need to eviction value because of enough free memory 
+ * return EVICT_ROCK_NOT_READY if the percentage of string key with value in RocksDB of total string key is too high or zero key
+ * return EVICT_ROCK_FREE    if evict enough memory 
+ * return EVICT_ROCK_TIMEOUT if timeout and not enought memory has been released 
  * If must_od is ture, we ignore the memory over limit check */
-int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
+static int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
     int keys_freed = 0;
     size_t mem_tofree;
     long long mem_freed; /* May be negative */
@@ -546,17 +567,15 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
 
     size_t used = zmalloc_used_memory();
     if (!must_do && used <= server.bunnymem)
-        return EVICT_OK;        // used memory not over limit and not must_do
+        return EVICT_ROCK_ENOUGH_MEM;        // used memory not over limit and not must_do
 
-    // Check the percentage of RockKey vs total key. 
-    // We do not need to waste time for high percentage of rock keys, e.g. 98%, 
+    // Check the percentage of Rock field vs total hash fields. 
+    // We do not need to waste time for high percentage of rock fields, e.g. 98%, 
     // because mostly it will be timeout for no evicting enough memory
-    /*
-    int rock_key_percentage = getRockKeyOfStringPercentage();
+    int rock_key_percentage = getRockKeyOfHashPercentage();
     if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
-        return EVICT_ROCK_PERCENTAGE; 
+        return EVICT_ROCK_NOT_READY; 
     }
-    */
 
     if (must_do) {
         if (used >= server.bunnymem) {
@@ -705,7 +724,77 @@ int performKeyOfHashEvictions(int must_do, size_t must_tofree) {
         }
     }
 
-    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_OK;
+    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;
+}
+
+/* We have two choice of eviction, key or hash. We try randomly to use one. 
+ * If one is successfully, then the next 10 times will try to use it. 
+ * RETURN is EVICT_ROCK_NO_NEED, EVICT_ROCK_FREE, EVICT_ROCK_PERCENTAGE or EVICT_FAIL_TIMEOUT */
+#define CONTINUOUS_EVICT_MAX 10
+int performeKeyOfStringOrHashEvictions(int must_do, size_t must_tofree) {
+    static int dice = 0;
+    static int evict_str_cnt = 0;
+    static int evict_hash_cnt = 0;
+
+    if (dice == 0 && evict_str_cnt > 0) {
+        if (evict_str_cnt >= CONTINUOUS_EVICT_MAX) {
+            dice = 1;   // over continuous limit, must change dice
+            evict_str_cnt = 0;
+        } 
+    } else if (dice == 1 && evict_hash_cnt > 0) {
+        if (evict_hash_cnt >= CONTINUOUS_EVICT_MAX) {
+            dice = 0;   // over continuous limit, must change dice
+            evict_hash_cnt = 0;
+        } 
+    } else {
+        evict_str_cnt = 0;
+        evict_hash_cnt = 0;
+    }
+
+    if (dice == 0) {
+        int try_str_res = performKeyOfStringEvictions(must_do, must_tofree);
+        if (try_str_res == EVICT_ROCK_ENOUGH_MEM) {
+            return EVICT_ROCK_ENOUGH_MEM;       
+        } else if (try_str_res == EVICT_ROCK_FREE) {
+            ++evict_str_cnt;
+            return EVICT_ROCK_FREE;     
+        } else {
+            // we must try another way
+            dice = 1;
+            int try_hash_res = performKeyOfHashEvictions(must_do, must_tofree);
+            if (try_hash_res == EVICT_ROCK_ENOUGH_MEM) {
+                return EVICT_ROCK_ENOUGH_MEM;
+            } else if (try_hash_res == EVICT_ROCK_FREE) {
+                ++evict_hash_cnt;
+                return EVICT_ROCK_FREE;
+            } else {
+                dice = 0;
+                return try_hash_res;
+            }
+        }        
+    } else {
+        serverAssert(dice == 1);
+        int try_hash_res = performKeyOfHashEvictions(must_do, must_tofree);
+        if (try_hash_res == EVICT_ROCK_ENOUGH_MEM) {
+            return EVICT_ROCK_ENOUGH_MEM;
+        } else if (try_hash_res == EVICT_ROCK_FREE) {
+            ++evict_hash_cnt;
+            return EVICT_ROCK_FREE;
+        } else {
+            // we must try another way
+            dice = 0;
+            int try_str_res = performKeyOfStringEvictions(must_do, must_tofree);
+            if (try_str_res == EVICT_ROCK_ENOUGH_MEM) {
+                return EVICT_ROCK_ENOUGH_MEM;
+            } else if (try_str_res == EVICT_ROCK_FREE) {
+                ++evict_str_cnt;
+                return EVICT_ROCK_FREE;
+            } else {
+                dice = 1;
+                return try_str_res;
+            }
+        }
+    }
 }
 
 
@@ -739,7 +828,7 @@ static void debugReportMemAndKey() {
 
         if (keyCnt)
             serverLog(LL_WARNING, 
-                      "dbid = %d, keyCnt = %d, strCnt = %d, rockCnt = %d, stat_key_str_ cnt = %lld, stat_key_str_rockval_cnt = %lld", 
+                      "dbid = %d, keyCnt = %d, strCnt = %d, rockCnt = %d, stat_key_str_cnt = %lld, stat_key_str_rockval_cnt = %lld", 
                       i, keyCnt, strCnt, rockCnt, 
                       (server.db+i)->stat_key_str_cnt, (server.db+i)->stat_key_str_rockval_cnt);
     }
@@ -781,9 +870,15 @@ void debugEvictCommand(client *c) {
         debugReportMemAndKey();
         serverLog(LL_WARNING, "===== after evcition ===========");
         int res = performKeyOfStringEvictions(0, 0);
-        serverLog(LL_WARNING, "performKeyOfStringEvictions() res = %s", 
-            res == EVICT_ROCK_OK ? "EVICT_ROCK_OK" : 
-                                   (res == EVICT_ROCK_PERCENTAGE ? "EVICT_ROCK_PERCENTAGE" : "EVICT_ROCK_TIMEOUT"));
+        char *str_res;
+        switch(res) {
+        case EVICT_ROCK_ENOUGH_MEM: str_res = "EVICT_ROCK_ENOUGH_MEM"; break;
+        case EVICT_ROCK_NOT_READY: str_res = "EVICT_ROCK_NOT_READY"; break;
+        case EVICT_ROCK_FREE: str_res = "EVICT_ROCK_FREE"; break;
+        case EVICT_ROCK_TIMEOUT: str_res = "EVICT_ROCK_TIMEOUT"; break;
+        default: serverPanic("debugEvictCommand(), No such case!");
+        }
+        serverLog(LL_WARNING, "performKeyOfStringEvictions() res = %s", str_res);
         debugReportMemAndKey();
     } else if (strcasecmp(flag, "evicthash") == 0) {
         serverLog(LL_WARNING, "debugEvictCommand() for hash has been called!");
@@ -791,9 +886,15 @@ void debugEvictCommand(client *c) {
         debugReportMemAndHash();
         serverLog(LL_WARNING, "===== after evcition ===========");
         int res = performKeyOfHashEvictions(0, 0);
-        serverLog(LL_WARNING, "performKeyOfHashEvictions() res = %s", 
-            res == EVICT_ROCK_OK ? "EVICT_ROCK_OK" : 
-                                   (res == EVICT_ROCK_PERCENTAGE ? "EVICT_ROCK_PERCENTAGE" : "EVICT_ROCK_TIMEOUT"));
+        char *str_res;
+        switch(res) {
+        case EVICT_ROCK_ENOUGH_MEM: str_res = "EVICT_ROCK_ENOUGH_MEM"; break;
+        case EVICT_ROCK_NOT_READY: str_res = "EVICT_ROCK_NOT_READY"; break;
+        case EVICT_ROCK_FREE: str_res = "EVICT_ROCK_FREE"; break;
+        case EVICT_ROCK_TIMEOUT: str_res = "EVICT_ROCK_TIMEOUT"; break;
+        default: serverPanic("debugEvictCommand(), No such case!");
+        }
+        serverLog(LL_WARNING, "performKeyOfHashEvictions() res = %s", str_res);
         debugReportMemAndHash();
     } else if (strcasecmp(flag, "reportkey") == 0) {
         debugReportMemAndKey();
@@ -846,9 +947,6 @@ int checkMemInProcessBuffer(client *c) {
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
 void cronEvictToMakeRoom() {
-    // debug 
-    // return;
-
     size_t used_mem = zmalloc_used_memory();
     size_t limit_mem = server.bunnymem;
 
@@ -859,14 +957,16 @@ void cronEvictToMakeRoom() {
     if (used_mem * 1000 / limit_mem <= 950) return;       // only over 95%, we start to evict
 
     // int res = performKeyOfStringEvictions(1, 1<<20);      // evict at least 1M bytes, server.hz set 50, so 1 second call 50 times
-    int res = performKeyOfHashEvictions(1, 1<<20);
+    // int res = performKeyOfHashEvictions(1, 1<<20);
+
+    int res = performeKeyOfStringOrHashEvictions(1, 1<<20);
 
     static int over_pencentage_cnt = 0;
-    if (res == EVICT_ROCK_PERCENTAGE) {
+    if (res == EVICT_ROCK_NOT_READY) {
         ++over_pencentage_cnt;
         over_pencentage_cnt = over_pencentage_cnt % 128;        // if Hz 50, so 2 seconds report once
         if (over_pencentage_cnt == 0)
-            serverLog(LL_WARNING, "getRockKeyOfStringPercentage() over limit of percentage = %d%%", ROCK_KEY_UPPER_PERCENTAGE);
+            serverLog(LL_WARNING, "memory is over limit, but no more key or hash can be freed!");
     }
 }
 

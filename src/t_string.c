@@ -32,6 +32,44 @@
 
 #include "rock.h"
 
+list* stringGenericGetOneKeyForRock(client *c) {
+    uint8_t dbid = c->db->id;
+    dict *dict_db = (server.db+dbid)->dict;
+    sds key = c->argv[1]->ptr;
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+    robj *o = dictGetVal(de_db);
+    if (o->type != OBJ_STRING) return NULL;
+    if (o != shared.keyRockVal) return NULL;
+
+    list *rock_keys = listCreate();
+    sds rock_key = encode_rock_key_for_string(dbid, key);
+    listAddNodeTail(rock_keys, rock_key);
+    return rock_keys;
+}
+
+// assume argv[start_index] to the end are searching keys, step is the jump step for arg
+list* stringGenericGetMultiKeysForRock(client *c, int start_index, int step) {
+    serverAssert(step > 0 && start_index > 0);
+
+    uint8_t dbid = c->db->id;
+    dict *dict_db = (server.db+dbid)->dict;
+    list *rock_keys = NULL;
+    for (int i = start_index; i < c->argc; i += step) {
+        sds key = c->argv[i]->ptr;
+        dictEntry *de_db = dictFind(dict_db, key);
+        if (de_db) {
+            robj *o = dictGetVal(de_db);
+            if (o == shared.keyRockVal) {
+                sds rock_key = encode_rock_key_for_string(dbid, key);
+                if (rock_keys == NULL) rock_keys = listCreate();
+                listAddNodeTail(rock_keys, rock_key);
+            }
+        }
+    }
+    return rock_keys;
+}
+
 /* Forward declarations */
 int getGenericCommand(client *c);
 
@@ -170,7 +208,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
  * Input flags are updated upon parsing the arguments. Unit and expire are updated if there are any
  * EX/EXAT/PX/PXAT arguments. Unit is updated to millisecond if PX/PXAT is set.
  */
-int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type) {
+int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type, int from_strem_check) {
 
     int j = command_type == COMMAND_GET ? 2 : 3;
     for (; j < c->argc; j++) {
@@ -247,7 +285,8 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
             *expire = next;
             j++;
         } else {
-            addReplyErrorObject(c,shared.syntaxerr);
+            if (!from_strem_check)
+                addReplyErrorObject(c,shared.syntaxerr);
             return C_ERR;
         }
     }
@@ -261,7 +300,7 @@ void setCommand(client *c) {
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
 
-    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_SET) != C_OK) {
+    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_SET, 0) != C_OK) {
         return;
     }
 
@@ -272,6 +311,10 @@ void setCommand(client *c) {
 void setnxCommand(client *c) {
     c->argv[2] = tryObjectEncoding(c->argv[2]);
     setGenericCommand(c,OBJ_SET_NX,c->argv[1],c->argv[2],NULL,0,shared.cone,shared.czero);
+}
+
+list* setnxCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void setexCommand(client *c) {
@@ -303,15 +346,21 @@ void getCommand(client *c) {
 }
 
 list* getCmdForRock(client *c) {
-    robj *key = c->argv[1];
-    robj *val = lookupKeyRead(c->db, key);
-
-    if (val != shared.keyRockVal) return NULL;        
+    return stringGenericGetOneKeyForRock(c);
+    /*
+    sds key = c->argv[1]->ptr;
+    dict *dict_db = (server.db+c->db->id)->dict;
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+    robj *o = dictGetVal(de_db);
+    if (o->type != OBJ_STRING) return NULL;
+    if (o != shared.keyRockVal) return NULL;        
 
     list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_string(c->db->id, key->ptr); 
+    sds rock_key = encode_rock_key_for_string(c->db->id, key); 
     listAddNodeTail(rock_keys, rock_key);
     return rock_keys;
+    */
 }
 
 /*
@@ -339,7 +388,7 @@ void getexCommand(client *c) {
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
 
-    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_GET) != C_OK) {
+    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_GET, 0) != C_OK) {
         return;
     }
 
@@ -424,6 +473,11 @@ void getdelCommand(client *c) {
     }
 }
 
+list* getdelCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
+
 void getsetCommand(client *c) {
     if (getGenericCommand(c) == C_ERR) return;
     c->argv[2] = tryObjectEncoding(c->argv[2]);
@@ -433,6 +487,10 @@ void getsetCommand(client *c) {
 
     /* Propagate as SET command */
     rewriteClientCommandArgument(c,0,shared.set);
+}
+
+list* getsetCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void setrangeCommand(client *c) {
@@ -495,6 +553,10 @@ void setrangeCommand(client *c) {
     addReplyLongLong(c,sdslen(o->ptr));
 }
 
+list* setrangeCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 void getrangeCommand(client *c) {
     robj *o;
     long long start, end;
@@ -536,6 +598,10 @@ void getrangeCommand(client *c) {
     }
 }
 
+list* getrangeCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 void mgetCommand(client *c) {
     int j;
 
@@ -552,6 +618,29 @@ void mgetCommand(client *c) {
             }
         }
     }
+}
+
+list* mgetCmdForRock(client *c) {
+    return stringGenericGetMultiKeysForRock(c, 1, 1);
+
+    /*
+    uint8_t dbid = c->db->id;
+    dict *dict_db = (server.db+dbid)->dict;
+    list *rock_keys = NULL;
+    for (int i = 1; i < c->argc; ++i) {
+        sds key = c->argv[i]->ptr;
+        dictEntry *de_db = dictFind(dict_db, key);
+        if (de_db) {
+            robj *o = dictGetVal(de_db);
+            if (o == shared.keyRockVal) {
+                sds rock_key = encode_rock_key_for_string(dbid, key);
+                if (rock_keys == NULL) rock_keys = listCreate();
+                listAddNodeTail(rock_keys, rock_key);
+            }
+        }
+    }
+    return rock_keys;
+    */
 }
 
 void msetGenericCommand(client *c, int nx) {
@@ -586,8 +675,16 @@ void msetCommand(client *c) {
     msetGenericCommand(c,0);
 }
 
+list* msetCmdForRock(client *c) {
+    return stringGenericGetMultiKeysForRock(c, 1, 2);
+}
+
 void msetnxCommand(client *c) {
     msetGenericCommand(c,1);
+}
+
+list* msetnxCmdForRock(client *c) {
+    return stringGenericGetMultiKeysForRock(c, 1, 2);
 }
 
 void incrDecrCommand(client *c, long long incr) {
@@ -632,8 +729,16 @@ void incrCommand(client *c) {
     incrDecrCommand(c,1);
 }
 
+list* incrCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 void decrCommand(client *c) {
     incrDecrCommand(c,-1);
+}
+
+list* decrCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void incrbyCommand(client *c) {
@@ -643,11 +748,19 @@ void incrbyCommand(client *c) {
     incrDecrCommand(c,incr);
 }
 
+list* incrbyCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 void decrbyCommand(client *c) {
     long long incr;
 
     if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != C_OK) return;
     incrDecrCommand(c,-incr);
+}
+
+list* decrbyCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void incrbyfloatCommand(client *c) {
@@ -681,6 +794,10 @@ void incrbyfloatCommand(client *c) {
     rewriteClientCommandArgument(c,0,shared.set);
     rewriteClientCommandArgument(c,2,new);
     rewriteClientCommandArgument(c,3,shared.keepttl);
+}
+
+list* incrbyfloatCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void appendCommand(client *c) {
@@ -717,6 +834,8 @@ void appendCommand(client *c) {
 }
 
 list* appendCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+    /*
     robj *key = c->argv[1];
     robj *val = lookupKeyRead(c->db, key);
 
@@ -726,6 +845,7 @@ list* appendCmdForRock(client *c) {
     sds rock_key = encode_rock_key_for_string(c->db->id, key->ptr); 
     listAddNodeTail(rock_keys, rock_key);
     return rock_keys;
+    */
 }
 
 void strlenCommand(client *c) {
@@ -735,6 +855,9 @@ void strlenCommand(client *c) {
     addReplyLongLong(c,stringObjectLen(o));
 }
 
+list* strlenCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
 
 /* STRALGO -- Implement complex algorithms on strings.
  *

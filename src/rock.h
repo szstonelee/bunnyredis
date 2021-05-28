@@ -7,6 +7,10 @@
 void processInputBuffer(client *c);
 int processCommandAndResetClient(client *c);
 
+// from t_string.c
+list* stringGenericGetOneKeyForRock(client *c);
+list* stringGenericGetMultiKeysForRock(client *c, int start_index, int step);
+
 /* API */
 void checkAndSetRockKeyNumber(client *c, const int is_stream_write);
 void addRockWriteTaskOfString(uint8_t dbid, sds key, sds val);
@@ -21,9 +25,38 @@ sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key);
 sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field);
 
 /* Command check rock value API */
+// string
 list* getCmdForRock(client *c);
 list* appendCmdForRock(client *c);
+list* bitcountCmdForRock(client *c);
+list* bitfieldCmdForRock(client *c);
+list* bitopCmdForRock(client *c);
+list* bitposCmdForRock(client *c);
+list* decrCmdForRock(client *c);
+list* decrbyCmdForRock(client *c);
+list* getbitCmdForRock(client *c);
+list* getdelCmdForRock(client *c);
+list* getrangeCmdForRock(client *c);
+list* getsetCmdForRock(client *c);
+list* incrCmdForRock(client *c);
+list* incrbyCmdForRock(client *c);
+list* incrbyfloatCmdForRock(client *c);
+list* mgetCmdForRock(client *c);
+list* msetCmdForRock(client *c);
+list* msetnxCmdForRock(client *c);
+list* setbitCmdForRock(client *c);
+list* setnxCmdForRock(client *c);
+list* setrangeCmdForRock(client *c);
+list* strlenCmdForRock(client *c);
+// transaction
 list* execCmdForRock(client *c);
+// hash
 list* hgetCmdForRock(client *c);
+list* hgetallCmdForRock(client *c);
+list* hincrbyCmdForRock(client *c);
+list* hincrbyfloatCmdForRock(client *c);
+list* hmgetCmdForRock(client *c);
+list* hstrlenCmdForRock(client *c);
+list* hvalsCmdForRock(client *c);
 
 #endif

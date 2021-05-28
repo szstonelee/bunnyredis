@@ -33,6 +33,58 @@
 
 #include <math.h>
 
+static list* hGenericGetOneFieldForRock(client *c) {
+    uint8_t dbid = c->db->id;
+    redisDb *db = server.db + dbid;
+    dict *dict_db = db->dict;
+    sds key = c->argv[1]->ptr;    
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+
+    robj *o = dictGetVal(de_db);
+    if (!o) return NULL;
+    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
+
+    dict *dict_hash = o->ptr;
+    sds field = c->argv[2]->ptr;
+    dictEntry *de_hash = dictFind(dict_hash, field);
+    if (!de_hash) return NULL;
+
+    sds val = dictGetVal(de_hash);
+    if (val != shared.hashRockVal) return NULL;
+
+    list *rock_keys = listCreate();
+    sds rock_key = encode_rock_key_for_hash(dbid, key, field);
+    listAddNodeTail(rock_keys, rock_key);
+    return rock_keys;    
+}
+
+static list* hGenericGetAllFieldForRock(client *c) {
+    uint8_t dbid = c->db->id;
+    sds key = c->argv[1]->ptr;
+    dict *dict_db = (server.db+dbid)->dict;
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+    robj *o = dictGetVal(de_db);
+    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
+    
+    list *rock_keys = NULL;
+    dict *dict_hash = o->ptr;
+    dictIterator *di = dictGetIterator(dict_hash);
+    dictEntry *de;
+    while ((de = dictNext(di))) {
+        sds field = dictGetKey(de);
+        sds val = dictGetVal(de);
+        if (val == shared.hashRockVal) {
+            if (rock_keys == NULL) rock_keys = listCreate();
+            sds rock_key = encode_rock_key_for_hash(dbid, key, field);
+            listAddNodeTail(rock_keys, rock_key);
+        }
+    }
+    dictReleaseIterator(di);
+    return rock_keys;
+}
+
 /*-----------------------------------------------------------------------------
  * Hash type API
  *----------------------------------------------------------------------------*/
@@ -771,6 +823,10 @@ void hincrbyCommand(client *c) {
     setForHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
+list* hincrbyCmdForRock(client *c) {
+    return hGenericGetOneFieldForRock(c);
+}
+
 void hincrbyfloatCommand(client *c) {
     long double value, incr;
     long long ll;
@@ -822,6 +878,10 @@ void hincrbyfloatCommand(client *c) {
     setForHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
+list* hincrbyfloatCmdForRock(client *c) {
+    return hGenericGetOneFieldForRock(c);
+}
+
 static void addHashFieldToReply(client *c, robj *o, sds field) {
     int ret;
 
@@ -870,29 +930,7 @@ void hgetCommand(client *c) {
 }
 
 list* hgetCmdForRock(client *c) {
-    uint8_t dbid = c->db->id;
-    redisDb *db = server.db + dbid;
-    dict *dict_db = db->dict;
-    sds key = c->argv[1]->ptr;    
-    dictEntry *de_db = dictFind(dict_db, key);
-    if (!de_db) return NULL;
-
-    robj *o = dictGetVal(de_db);
-    if (!o) return NULL;
-    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
-
-    dict *dict_hash = o->ptr;
-    sds field = c->argv[2]->ptr;
-    dictEntry *de_hash = dictFind(dict_hash, field);
-    if (!de_hash) return NULL;
-
-    sds val = dictGetVal(de_hash);
-    if (val != shared.hashRockVal) return NULL;
-
-    list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_hash(dbid, key, field);
-    listAddNodeTail(rock_keys, rock_key);
-    return rock_keys;    
+    return hGenericGetOneFieldForRock(c);
 }
 
 void hmgetCommand(client *c) {
@@ -911,6 +949,35 @@ void hmgetCommand(client *c) {
         // update lru
         updateHashLru(c->db->id, c->argv[1]->ptr, c->argv[i]->ptr);
     }
+}
+
+list* hmgetCmdForRock(client *c) {
+    uint8_t dbid = c->db->id;
+    redisDb *db = server.db + dbid;
+    dict *dict_db = db->dict;
+    sds key = c->argv[1]->ptr;    
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+
+    robj *o = dictGetVal(de_db);
+    if (!o) return NULL;
+    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
+
+    list *rock_keys = NULL;
+    dict *dict_hash = o->ptr;
+    for (int i = 2; i < c->argc; i++) {
+        sds field = c->argv[i]->ptr;
+        dictEntry *de_hash = dictFind(dict_hash, field);
+        if (de_hash) {
+            sds val = dictGetVal(de_hash);
+            if (val == shared.hashRockVal) {
+                if (rock_keys == NULL) rock_keys = listCreate();
+                sds rock_key = encode_rock_key_for_hash(dbid, key, field);
+                listAddNodeTail(rock_keys, rock_key);
+            }
+        }
+    }
+    return rock_keys;    
 }
 
 void hdelCommand(client *c) {
@@ -990,6 +1057,10 @@ void hstrlenCommand(client *c) {
     updateHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
+list* hstrlenCmdForRock(client *c) {
+    return hGenericGetOneFieldForRock(c);
+}
+
 static void addHashIteratorCursorToReply(client *c, hashTypeIterator *hi, int what) {
     if (hi->encoding == OBJ_ENCODING_ZIPLIST) {
         unsigned char *vstr = NULL;
@@ -1058,8 +1129,16 @@ void hvalsCommand(client *c) {
     genericHgetallCommand(c,OBJ_HASH_VALUE);
 }
 
+list* hvalsCmdForRock(client *c) {
+    return hGenericGetAllFieldForRock(c);
+}
+
 void hgetallCommand(client *c) {
     genericHgetallCommand(c,OBJ_HASH_KEY|OBJ_HASH_VALUE);
+}
+
+list* hgetallCmdForRock(client *c) {
+    return hGenericGetAllFieldForRock(c);
 }
 
 void hexistsCommand(client *c) {

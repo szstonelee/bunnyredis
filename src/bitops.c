@@ -29,6 +29,7 @@
  */
 
 #include "server.h"
+#include "rock.h"
 
 /* -----------------------------------------------------------------------------
  * Helpers and low level bit functions.
@@ -562,6 +563,10 @@ void setbitCommand(client *c) {
     addReply(c, bitval ? shared.cone : shared.czero);
 }
 
+list* setbitCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 /* GETBIT key offset */
 void getbitCommand(client *c) {
     robj *o;
@@ -587,6 +592,10 @@ void getbitCommand(client *c) {
     }
 
     addReply(c, bitval ? shared.cone : shared.czero);
+}
+
+list* getbitCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 /* BITOP op_name target_key src_key1 src_key2 src_key3 ... src_keyN */
@@ -779,6 +788,29 @@ void bitopCommand(client *c) {
     addReplyLongLong(c,maxlen); /* Return the output string length in bytes. */
 }
 
+list* bitopCmdForRock(client *c) {
+    return stringGenericGetMultiKeysForRock(c, 2, 1);
+    /*
+    uint8_t dbid = c->db->id;
+    dict *dict_db = (server.db+dbid)->dict;
+
+    list *rock_keys = NULL;
+    for (int i = 2; i < c->argc; ++i) {
+        sds key = c->argv[i]->ptr;
+        dictEntry *de_db = dictFind(dict_db, key);
+        if (de_db) {
+            robj *o = dictGetVal(de_db);
+            if (o == shared.keyRockVal) {
+                if (rock_keys == NULL) rock_keys = listCreate();
+                sds rock_key = encode_rock_key_for_string(dbid, key);
+                listAddNodeTail(rock_keys, rock_key);
+            }
+        }
+    }
+    return rock_keys;
+    */
+}
+
 /* BITCOUNT key [start end] */
 void bitcountCommand(client *c) {
     robj *o;
@@ -826,6 +858,10 @@ void bitcountCommand(client *c) {
 
         addReplyLongLong(c,redisPopcount(p+start,bytes));
     }
+}
+
+list* bitcountCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 /* BITPOS key bit [start [end]] */
@@ -904,6 +940,10 @@ void bitposCommand(client *c) {
         if (pos != -1) pos += start*8; /* Adjust for the bytes we skipped. */
         addReplyLongLong(c,pos);
     }
+}
+
+list* bitposCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 /* BITFIELD key subcommmand-1 arg ... subcommand-2 arg ... subcommand-N ...
@@ -1158,6 +1198,10 @@ void bitfieldGeneric(client *c, int flags) {
 
 void bitfieldCommand(client *c) {
     bitfieldGeneric(c, BITFIELD_FLAG_NONE);
+}
+
+list* bitfieldCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
 }
 
 void bitfieldroCommand(client *c) {
