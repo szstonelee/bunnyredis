@@ -220,6 +220,7 @@ client* lookupStreamCurrentClient() {
  */
 
 struct redisCommand redisCommandTable[] = {
+    // BunnyRedis does not support Redis Modules
     {"module",NULL,-1,moduleCommand,-2,
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
@@ -343,18 +344,22 @@ struct redisCommand redisCommandTable[] = {
      "write fast @list",
      0,NULL,1,1,1,0,0,0},
 
+    // BunnyRedis not support block
     {"brpop",NULL,-1,brpopCommand,-3,
      "write no-script @list @blocking",
      0,NULL,1,-2,1,0,0,0},
 
+    // BunnyRedis not support block
     {"brpoplpush",NULL,1,brpoplpushCommand,4,
      "write use-memory no-script @list @blocking",
      0,NULL,1,2,1,0,0,0},
 
-    {"blmove",NULL,1,blmoveCommand,6,
+    // BunnyRedis not support block
+    {"blmove",NULL,-1,blmoveCommand,6,
      "write use-memory no-script @list @blocking",
      0,NULL,1,2,1,0,0,0},
 
+    // BunnyRedis not support block
     {"blpop",NULL,-1,blpopCommand,-3,
      "write no-script @list @blocking",
      0,NULL,1,-2,1,0,0,0},
@@ -575,11 +580,13 @@ struct redisCommand redisCommandTable[] = {
      "write fast @sortedset",
      0,NULL,1,1,1,0,0,0},
 
-    {"bzpopmin",NULL,1,bzpopminCommand,-3,
+    // BunnyRedis does not support block
+    {"bzpopmin",NULL,-1,bzpopminCommand,-3,
      "write no-script fast @sortedset @blocking",
      0,NULL,1,-2,1,0,0,0},
 
-    {"bzpopmax",NULL,1,bzpopmaxCommand,-3,
+    // BunnyRedis does not support block
+    {"bzpopmax",NULL,-1,bzpopmaxCommand,-3,
      "write no-script fast @sortedset @blocking",
      0,NULL,1,-2,1,0,0,0},
 
@@ -754,14 +761,17 @@ struct redisCommand redisCommandTable[] = {
      "fast @connection",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis does not use persistence of Redis
     {"save",NULL,-1,saveCommand,1,
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis does not use persistence of Redis
     {"bgsave",NULL,-1,bgsaveCommand,-1,
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis does not use persistence of Redis
     {"bgrewriteaof",NULL,-1,bgrewriteaofCommand,1,
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
@@ -770,7 +780,8 @@ struct redisCommand redisCommandTable[] = {
      "admin no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
-    {"lastsave",NULL,0,lastsaveCommand,1,
+    // BunnyRedis does not use persistence of Redis
+    {"lastsave",NULL,-1,lastsaveCommand,1,
      "random fast ok-loading ok-stale @admin @dangerous",
      0,NULL,0,0,0,0,0,0},
 
@@ -790,10 +801,12 @@ struct redisCommand redisCommandTable[] = {
      "no-script fast ok-loading ok-stale @transaction",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis does not need master/slave of Redis
     {"sync",NULL,-1,syncCommand,1,
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis does not need master/slave of Redis
     {"psync",NULL,-1,syncCommand,-3,
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
@@ -842,14 +855,17 @@ struct redisCommand redisCommandTable[] = {
      "write fast @keyspace",
      0,NULL,1,1,1,0,0,0},
 
+    // BunnyRedis does need master/slave of Redis
     {"slaveof",NULL,-1,replicaofCommand,3,
      "admin no-script ok-stale",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis does need master/slave of Redis
     {"replicaof",NULL,-1,replicaofCommand,3,
      "admin no-script ok-stale",
      0,NULL,0,0,0,0,0,0},
 
+    // role will always return 'Master' because BunnyReids does not need master/slave or sentinels
     {"role",NULL,0,roleCommand,1,
      "ok-loading ok-stale no-script fast @dangerous",
      0,NULL,0,0,0,0,0,0},
@@ -858,6 +874,7 @@ struct redisCommand redisCommandTable[] = {
      "admin no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
+    // NOTE: config is for single node
     {"config",NULL,0,configCommand,-2,
      "admin ok-loading ok-stale no-script",
      0,NULL,0,0,0,0,0,0},
@@ -866,6 +883,7 @@ struct redisCommand redisCommandTable[] = {
      "pub-sub no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
+    // NOTE: unsubscribe is not a stream write command
     {"unsubscribe",NULL,0,unsubscribeCommand,-1,
      "pub-sub no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
@@ -874,6 +892,7 @@ struct redisCommand redisCommandTable[] = {
      "pub-sub no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
+    // NOTE: unsubscribe is not a stream write command
     {"punsubscribe",NULL,0,punsubscribeCommand,-1,
      "pub-sub no-script ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
@@ -896,6 +915,7 @@ struct redisCommand redisCommandTable[] = {
      "no-script fast ok-loading ok-stale @transaction",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis doess not need Redis cluster 
     {"cluster",NULL,-1,clusterCommand,-2,
      "admin ok-stale random",
      0,NULL,0,0,0,0,0,0},
@@ -959,6 +979,7 @@ struct redisCommand redisCommandTable[] = {
      "admin random ok-loading ok-stale",
      0,NULL,0,0,0,0,0,0},
 
+    // script not supported in BunnyRedis
     {"script",NULL,-1,scriptCommand,-2,
      "no-script may-replicate @scripting",
      0,NULL,0,0,0,0,0,0},
@@ -1032,7 +1053,7 @@ struct redisCommand redisCommandTable[] = {
      "admin @hyperloglog",
       0,NULL,0,0,0,0,0,0},
 
-    {"pfadd",NULL,1,pfaddCommand,-2,
+    {"pfadd",pfaddCmdForRock,1,pfaddCommand,-2,
      "write use-memory fast @hyperloglog",
      0,NULL,1,1,1,0,0,0},
 
@@ -1040,11 +1061,11 @@ struct redisCommand redisCommandTable[] = {
      * final bytes in the HyperLogLog representation. However in this case
      * we claim that the representation, even if accessible, is an internal
      * affair, and the command is semantically read only. */
-    {"pfcount",NULL,0,pfcountCommand,-2,
+    {"pfcount",pfcountCmdForRock,0,pfcountCommand,-2,
      "read-only may-replicate @hyperloglog",
      0,NULL,1,-1,1,0,0,0},
 
-    {"pfmerge",NULL,1,pfmergeCommand,-2,
+    {"pfmerge",pfmergeCmdForRock,1,pfmergeCommand,-2,
      "write use-memory @hyperloglog",
      0,NULL,1,-1,1,0,0,0},
 
@@ -1143,6 +1164,7 @@ struct redisCommand redisCommandTable[] = {
      "no-script ok-stale ok-loading fast @connection",
      0,NULL,0,0,0,0,0,0},
 
+    // BunnyRedis does not need Redis Master/Slave or Redis Cluster
     {"failover",NULL,-1,failoverCommand,-1,
      "admin no-script ok-stale",
      0,NULL,0,0,0,0,0,0},

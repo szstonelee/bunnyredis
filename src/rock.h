@@ -69,5 +69,9 @@ list* hincrbyfloatCmdForRock(client *c);
 list* hmgetCmdForRock(client *c);
 list* hstrlenCmdForRock(client *c);
 list* hvalsCmdForRock(client *c);
+// hyperloglog
+list* pfaddCmdForRock(client *c);
+list* pfcountCmdForRock(client *c);
+list* pfmergeCmdForRock(client *c);
 
 #endif

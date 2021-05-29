@@ -2818,12 +2818,14 @@ NULL
             addReplyNull(c);
     } else if (!strcasecmp(c->argv[1]->ptr,"unpause") && c->argc == 2) {
         /* CLIENT UNPAUSE */
-        unpauseClients();
-        addReply(c,shared.ok);
+        // unpauseClients();
+        // addReply(c,shared.ok);
+        addReplyError(c,"CLIENT UNPAUSE not supported in BunnyRedis!");
     } else if (!strcasecmp(c->argv[1]->ptr,"pause") && (c->argc == 3 ||
                                                         c->argc == 4))
     {
         /* CLIENT PAUSE TIMEOUT [WRITE|ALL] */
+        /*
         mstime_t end;
         int type = CLIENT_PAUSE_ALL;
         if (c->argc == 4) {
@@ -2842,6 +2844,8 @@ NULL
             UNIT_MILLISECONDS) != C_OK) return;
         pauseClients(end, type);
         addReply(c,shared.ok);
+        */
+       addReplyError(c,"CLIENT PAUSE not supported in BunnyRedis!");
     } else if (!strcasecmp(c->argv[1]->ptr,"tracking") && c->argc >= 3) {
         /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
          *                          [PREFIX second] [OPTIN] [OPTOUT] ... */

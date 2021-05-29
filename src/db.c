@@ -1148,7 +1148,8 @@ void shutdownCommand(client *c) {
         if (!strcasecmp(c->argv[1]->ptr,"nosave")) {
             flags |= SHUTDOWN_NOSAVE;
         } else if (!strcasecmp(c->argv[1]->ptr,"save")) {
-            flags |= SHUTDOWN_SAVE;
+            // flags |= SHUTDOWN_SAVE;
+            flags |= SHUTDOWN_NOSAVE;   // save is same as nosave because BunnyRedis does need persistence of Rediss
         } else {
             addReplyErrorObject(c,shared.syntaxerr);
             return;

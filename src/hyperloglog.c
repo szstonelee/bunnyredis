@@ -30,6 +30,7 @@
  */
 
 #include "server.h"
+#include "rock.h"
 
 #include <stdint.h>
 #include <math.h>
@@ -1216,6 +1217,10 @@ void pfaddCommand(client *c) {
     addReply(c, updated ? shared.cone : shared.czero);
 }
 
+list* pfaddCmdForRock(client *c) {
+    return stringGenericGetOneKeyForRock(c);
+}
+
 /* PFCOUNT var -> approximated cardinality of set. */
 void pfcountCommand(client *c) {
     robj *o;
@@ -1306,6 +1311,10 @@ void pfcountCommand(client *c) {
     }
 }
 
+list* pfcountCmdForRock(client *c) {
+    return stringGenericGetMultiKeysForRock(c, 1, 1);
+}
+
 /* PFMERGE dest src1 src2 src3 ... srcN => OK */
 void pfmergeCommand(client *c) {
     uint8_t max[HLL_REGISTERS];
@@ -1378,6 +1387,10 @@ void pfmergeCommand(client *c) {
     notifyKeyspaceEvent(NOTIFY_STRING,"pfadd",c->argv[1],c->db->id);
     server.dirty++;
     addReply(c,shared.ok);
+}
+
+list* pfmergeCmdForRock(client *c) {
+    return stringGenericGetMultiKeysForRock(c, 1, 1);
 }
 
 /* ========================== Testing / Debugging  ========================== */
