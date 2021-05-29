@@ -733,6 +733,8 @@ typedef struct redisDb {
 
     long long stat_key_str_cnt;             /* stats for key number in the db of type string */
     long long stat_key_str_rockval_cnt;     /* stats for the number if key string which value in RocksDB */
+    long long stat_key_ziplist_cnt;
+    long long stat_key_ziplist_rockval_cnt;
 } redisDb;
 
 /* Declare database backup that include redis main DBs and slots to keys map.
@@ -1011,8 +1013,9 @@ struct sharedObjectsStruct {
     *mbulkhdr[OBJ_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
     *bulkhdr[OBJ_SHARED_BULKHDR_LEN];  /* "$<value>\r\n" */
     sds minstring, maxstring;
-    robj *keyRockVal;    /* special shared object indicating the value saved for key (right now type is String) in rocksdb */
-    sds  hashRockVal;  /* special shared object indicating the value saved for field of hash type in rocksdb */
+    robj *keyRockVal;       /* special shared object indicating the value saved for key (right now type is String) in rocksdb */
+    robj *ziplistRockVal;   /* special shared object indicating the value saved for hash with encoding of ziplist in rocksdb */
+    sds  hashRockVal;       /* special shared object indicating the value saved for field of hash type with hash encoding in rocksdb */
 };
 
 /* ZSETs use a specialized version of Skiplists */

@@ -32,6 +32,8 @@
 
 #include "rock.h"
 
+/* NOTE: the name is stirng, but accutually it could be hash with ziplist encoding 
+ *       because db.c will call it. */
 list* stringGenericGetOneKeyForRock(client *c) {
     return genericGetOneKeyForRock(c, 1);       // always assume the second argument (index == 1)
     /*
@@ -51,7 +53,10 @@ list* stringGenericGetOneKeyForRock(client *c) {
     */
 }
 
-// assume argv[start_index] to the end are searching keys, step is the jump step for arg
+/* assume argv[start_index] to the end are searching keys, step is the jump step for arg.
+ * NOTE: the name of the function has stirng, and it only support string 
+ *       because it only be called by t_string.c, bitop.c, hyperloglog.c.
+ *       So it guarantees the object type is OBJ_STRING  */
 list* stringGenericGetMultiKeysForRock(client *c, int start_index, int step) {
     serverAssert(step > 0 && start_index > 0);
 

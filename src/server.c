@@ -691,7 +691,8 @@ struct redisCommand redisCommandTable[] = {
      "ok-loading fast ok-stale @keyspace",
      0,NULL,0,0,0,0,0,0},
 
-    {"swapdb",NULL,1,swapdbCommand,3,
+    // We can not swap db, because dbid is stored in Rocksdb
+    {"swapdb",NULL,-1,swapdbCommand,3,
      "write fast @keyspace @dangerous",
      0,NULL,0,0,0,0,0,0},
 
@@ -2773,7 +2774,11 @@ void createSharedObjects(void) {
     shared.keyRockVal->ptr = (void *)250;          /* 250 means FOOL in Chinese context. */
     makeObjectShared(shared.keyRockVal);
 
-    /* shard object which idicating the value of field in hash type in rocksdb */
+    /* shared object which indicating the value of hash type of ziplist encoding in rocksdb */
+    shared.ziplistRockVal = createHashObject();    // default is hash type with ziplist encoding 
+    makeObjectShared(shared.ziplistRockVal);
+
+    /* shard object which idicating the value of field in hash type of hash encoding in rocksdb */
     shared.hashRockVal = sdsnew("hashRockVal");    
 }
 
@@ -3389,6 +3394,8 @@ void initServer(void) {
         server.db[j].defrag_later = listCreate();
         server.db[j].stat_key_str_cnt = 0;
         server.db[j].stat_key_str_rockval_cnt = 0;
+        server.db[j].stat_key_ziplist_cnt = 0;
+        server.db[j].stat_key_ziplist_rockval_cnt = 0;
         listSetFreeMethod(server.db[j].defrag_later,(void (*)(void*))sdsfree);
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */

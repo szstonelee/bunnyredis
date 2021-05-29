@@ -8,10 +8,10 @@ def generate_field_val(field_lower_num, field_upper_num):
     mp = {}
     dice_num = random.randint(field_lower_num, field_upper_num)
     for _ in range(0, dice_num):
-        dice_field_len = random.randint(1, 300)
+        dice_field_len = random.randint(1, 200)
         # dice_field_len = random.randint(3, 8)
         field = random.choice(string.ascii_letters) * dice_field_len
-        dice_val_len = random.randint(200, 2048)
+        dice_val_len = random.randint(2, 1024)
         # dice_val_len = random.randint(20, 40)
         val = str(random.randint(0, 9)) * dice_val_len
         mp[field] = val
@@ -93,7 +93,7 @@ def _main():
 
     test_hset(r, redis_hash)
 
-    # test_hgetall(r, redis_hash)
+    test_hgetall(r, redis_hash)
 
 
 if __name__ == '__main__':

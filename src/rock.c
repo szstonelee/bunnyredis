@@ -11,8 +11,9 @@
 #define START_SLEEP_MICRO   16
 #define MAX_SLEEP_MICRO     1024            // max sleep for 1 ms
 
-#define ROCK_STRING_TYPE     0           // Rocksdb key is coded as dbid(uint8_t) + byte key of Redis string type
-#define ROCK_HASH_TYPE       1           // Rocksdb key is coded as dbid(uint8_t) + (uint32_t) key_size + byte of key + byte of field
+#define ROCK_STRING_TYPE    0       // For Redis String(encoding is str too). Rocksdb key is coded as dbid(uint8_t) + byte key of Redis string type
+#define ROCK_HASH_TYPE      1       // For Redis Hash(encoding is hash too). Rocksdb key is coded as dbid(uint8_t) + (uint32_t) key_size + byte of key + byte of field
+#define ROCK_ZIPLIST_TYPE   2       // For Redis Hash(encoding is Ziplist). Rocksdb key is coded as dbid(uint8_t) + byte key of Reds string type 
 
 #define ROCK_WRITE_QUEUE_TOO_LONG   64
 #define ROCK_WRITE_PICK_MAX_LEN     1024
@@ -137,9 +138,9 @@ static void report_rocksdb_mem_usage() {
 void debugRockCommand(client *c) {
     sds flag = c->argv[1]->ptr;
 
-    if (strcasecmp(flag, "set") == 0) {
+    if (strcasecmp(flag, "setstr") == 0) {
         if (c->argc != 3) {
-            addReplyError(c, "debugrock set <key_name>");
+            addReplyError(c, "debugrock setstr <key_name>");
             return;
         }
 
@@ -155,8 +156,8 @@ void debugRockCommand(client *c) {
             addReplyError(c, "key found, but type is not OBJ_STRING");
             return;
         }
-        if (val->encoding != OBJ_ENCODING_RAW) {
-            addReplyError(c, "key found but type is not OBJ_ENCODING_RAW");
+        if (!(val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)) {
+            addReplyError(c, "key found but type is not OBJ_ENCODING_RAW or OBJ_ENCODING_EMBSTR");
             return;
         }
 
@@ -168,6 +169,40 @@ void debugRockCommand(client *c) {
         dictSetVal(c->db->dict, de, shared.keyRockVal);
         ++c->db->stat_key_str_rockval_cnt;
         addRockWriteTaskOfString(c->db->id, key->ptr, val->ptr);
+        decrRefCount(val);
+    
+    } else if (strcasecmp(flag, "setziplist") == 0) {
+        if (c->argc != 3) {
+            addReplyError(c, "debugrock setziplist <key_name>");
+            return;
+        }
+
+        robj *key = c->argv[2];
+        dictEntry *de = dictFind(c->db->dict, key->ptr);
+        if (!de) {
+            addReplyError(c, "can not find the key to set rock value");
+            return;            
+        }
+        robj *val = dictGetVal(de);
+        serverAssert(val);
+        if (val->type != OBJ_HASH) {
+            addReplyError(c, "key found, but type is not OBJ_HASH");
+            return;
+        }
+        if (val->encoding != OBJ_ENCODING_ZIPLIST) {
+            addReplyError(c, "key found but type is not OBJ_ENCODING_ZIPLIST");
+            return;
+        }
+
+        if (val == shared.ziplistRockVal) {
+            addReplyError(c, "key found, but the value has already been shared.ziplistRockVal");
+            return;
+        }
+
+        dictSetVal(c->db->dict, de, shared.ziplistRockVal);
+        ++c->db->stat_key_ziplist_rockval_cnt;
+        unsigned char *zl = val->ptr;
+        addRockWriteTaskOfZiplist(c->db->id, key->ptr, zl);
         decrRefCount(val);
 
     } else if (strcasecmp(flag, "mem") == 0) {
@@ -261,7 +296,8 @@ void checkAndSetRockKeyNumber(client *c, const int is_stream_write) {
     listRelease(rock_keys);
 }
 
-/* allocate memory resouce by return sds */
+/* allocate memory resouce by return sds. 
+ * It is for string type with encoding of string, i.e., OBJ_ENCODING_RAW and OBJ_ENCODING_EMBSTR */
 sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key) {
     // we need allocate new memory for rock_key, 
     // because it may be transfered the owner to async-read_rock_key_candidates
@@ -273,8 +309,19 @@ sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key) {
     return rock_key;
 }
 
+/* allocate memory resource by resturn sds 
+ * It is for hash type with encoding ziplist */
+sds encode_rock_key_for_ziplist(const uint8_t dbid, sds const string_key) {
+    sds rock_key;
+    uint8_t type = ROCK_ZIPLIST_TYPE;
+    rock_key = sdsnewlen(&type, 1);
+    rock_key = sdscatlen(rock_key, &dbid, 1);
+    rock_key = sdscatlen(rock_key, string_key, sdslen(string_key));
+    return rock_key;
+}
+
 /* allocate memory resouce by return sds 
- * for hash, the rock_key has one more property as field */
+ * It is for hash with hash encoding, the rock_key has one more property as field */
 sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field) {
     // we need allocate new memory for rock_key
     // because it may be transfered the owner to async-read_rock_key_candidates
@@ -293,7 +340,7 @@ sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field)
 static void decode_rock_key(sds const rock_key, uint8_t *type, uint8_t *dbid, char **key, size_t *key_sz) {
     serverAssert(sdslen(rock_key) >= 2);
     *type = rock_key[0];
-    serverAssert(*type == ROCK_STRING_TYPE || *type == ROCK_HASH_TYPE);
+    serverAssert(*type == ROCK_STRING_TYPE || *type == ROCK_HASH_TYPE || *type == ROCK_ZIPLIST_TYPE);
     *dbid = rock_key[1];
     serverAssert(*dbid < server.dbnum);
     *key = rock_key+2;
@@ -306,7 +353,7 @@ static void decode_rock_key(sds const rock_key, uint8_t *type, uint8_t *dbid, ch
 /*                                 */
 /*                                 */
 
-void addRockWriteTaskOfString(const uint8_t dbid, sds const key, sds const val) {
+void addRockWriteTaskOfString(uint8_t dbid, sds key, sds val) {
     sds rock_key, copy_val;
     struct WriteTask *task;
 
@@ -323,7 +370,25 @@ void addRockWriteTaskOfString(const uint8_t dbid, sds const key, sds const val) 
     unlockRockWrite();
 }
 
-void addRockWriteTaskOfHash(const uint8_t dbid, sds const key, sds const field, sds const val) {
+void addRockWriteTaskOfZiplist(uint8_t dbid, sds key, unsigned char *zl) {
+    sds rock_key, copy_val;
+    struct WriteTask *task;
+
+    // the resource will be reclaimed in pickWriteTasksInWriteThread()
+    task = zmalloc(sizeof(*task));
+    rock_key = encode_rock_key_for_ziplist(dbid, key);
+    size_t sz = ziplistBlobLen(zl);
+    copy_val = sdsnewlen(zl, sz);
+
+    task->rock_key = rock_key;
+    task->val = copy_val;
+
+    lockRockWrite();
+    listAddNodeTail(write_queue, task);
+    unlockRockWrite(); 
+}
+
+void addRockWriteTaskOfHash(uint8_t dbid, sds key, sds field, sds val) {
     sds rock_key, copy_val;
     struct WriteTask *task;
     
@@ -778,6 +843,26 @@ static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, s
         serverAssert(db->stat_key_str_rockval_cnt);
         --db->stat_key_str_rockval_cnt;
 
+    } else if (type == ROCK_ZIPLIST_TYPE) {
+        redisDb *db = server.db+dbid;
+        dict *dict = db->dict;
+        dictEntry *de = dictFind(dict, key);
+        serverAssert(de);
+        robj *dbval = dictGetVal(de);
+        if (dbval != shared.ziplistRockVal) {
+            serverLog(LL_WARNING, "recover_val() found the dbval is not shared.ziplistRockVal, key = %s", key);
+            exit(1);
+        }
+        // reference t_hash.c hashTypeDup()
+        size_t sz = sdslen(val);
+        unsigned char *zl = zmalloc(sz);
+        memcpy(zl, val, sz);
+        robj *recover = createObject(OBJ_HASH, zl);
+        recover->encoding = OBJ_ENCODING_ZIPLIST;
+        dictGetVal(de) = recover;
+        serverAssert(db->stat_key_ziplist_rockval_cnt);
+        --db->stat_key_ziplist_rockval_cnt;
+
     } else {
         serverAssert(type == ROCK_HASH_TYPE);
         // decode the combined key to hash_key and hash_field
@@ -991,8 +1076,9 @@ void initRockPipeAndRockRead() {
 }
 
 /* when db delete by sync or async, we need update stat for rock 
- * 1. if string, update db.rock_stat and string_stat
- * 2. if hash, try to remove it from evict_hash_candidates  
+ * 1. if string, update string for db.rock_stat and string_stat
+ * 2. if hash with encoding ziplist, update ziplist for db.rock_stat and ziplist_stat
+ * 3. if hash with encoding hash, try to remove it from evict_hash_candidates  
  * de is the dict entry of the db which will be delete */
 void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, dictEntry* de) {
     serverAssert(db && de);
@@ -1007,6 +1093,15 @@ void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, 
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
         }
+
+    } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_ZIPLIST) {
+        serverAssert(db->stat_key_ziplist_cnt);
+        --db->stat_key_ziplist_cnt;
+        if (o == shared.ziplistRockVal) {
+            serverAssert(db->stat_key_ziplist_rockval_cnt);
+            --db->stat_key_ziplist_rockval_cnt;
+        }
+
     } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
         sds combined = combine_dbid_key(db->id, key); 
         removeHashCandidate(combined);
@@ -1022,11 +1117,18 @@ list* genericGetOneKeyForRock(client *c, int index) {
     dictEntry *de_db = dictFind(dict_db, key);
     if (!de_db) return NULL;
     robj *o = dictGetVal(de_db);
-    if (o->type != OBJ_STRING) return NULL;
-    if (o != shared.keyRockVal) return NULL;
 
-    list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_string(dbid, key);
-    listAddNodeTail(rock_keys, rock_key);
-    return rock_keys;
+    if (!(o->type == OBJ_STRING || (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_ZIPLIST)))
+        return NULL;
+
+    if (o->type == OBJ_STRING) {
+        if (o != shared.keyRockVal) return NULL;
+        list *rock_keys = listCreate();
+        sds rock_key = encode_rock_key_for_string(dbid, key);
+        listAddNodeTail(rock_keys, rock_key);
+        return rock_keys;
+    } else {
+        // ziplist
+        return hGenericRockForZiplist(dbid, key, o);
+    }
 }

@@ -224,6 +224,9 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
  * ownership of the SDS string, otherwise 0 is returned, and is up to the
  * caller to free the SDS string. */
 int dbAddRDBLoad(redisDb *db, sds key, robj *val) {
+    serverLog(LL_WARNING, "Can not load keys from RDB file because BunnyRedis disable RDB/AOF");
+    exit(1);
+
     int retval = dictAdd(db->dict, key, val);
     if (retval != DICT_OK) return 0;
     dictAdd(db->key_lrus, key, 0);
@@ -245,15 +248,30 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     // deal with evict hash candidates and cnt
     robj *old = dictGetVal(de);
     // if set overwrite old wich is not String type, we need incr the cnt
-    if (old->type != OBJ_STRING) ++db->stat_key_str_cnt;
-    if (old->type == OBJ_STRING) {
+    // if (old->type != OBJ_STRING) ++db->stat_key_str_cnt;
+    if (old->type == OBJ_STRING) {        
         serverAssert(db->stat_key_str_cnt);
+        --db->stat_key_str_cnt;
         if (old == shared.keyRockVal) {
             // we can not overwirte the old value which is keyRockVal with keyRockVal
-            serverAssert(val != shared.keyRockVal);      
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
         }
+        serverAssert(val != shared.keyRockVal);
+        if (val->type == OBJ_STRING)
+            ++db->stat_key_str_cnt;
+
+    } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_ZIPLIST) {
+        serverAssert(db->stat_key_ziplist_cnt);
+        --db->stat_key_ziplist_cnt;
+        if (old == shared.ziplistRockVal) {
+            serverAssert(db->stat_key_ziplist_rockval_cnt);
+            --db->stat_key_ziplist_rockval_cnt;
+        }
+        serverAssert(val != shared.ziplistRockVal);
+        if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_ZIPLIST)
+            ++db->stat_key_ziplist_cnt;
+
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_HT) {
         // the old hash maybe in server.evict_hash_candidates
         sds combined = combine_dbid_key(db->id, key->ptr);

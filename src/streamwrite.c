@@ -149,7 +149,7 @@ static int parse_msg_for_no_exec(sds msg, uint8_t *node_id, uint64_t *client_id,
                                  sds *command, list **args) {
     size_t msg_len = sdslen(msg);
     size_t cnt = 0;
-    char *p = msg;
+    unsigned char *p = (unsigned char*)msg;
 
     // node id
     *node_id = *((uint8_t*)p);
@@ -214,7 +214,7 @@ static int parse_msg_for_exec(sds msg, uint8_t *node_id, uint64_t *client_id, ui
                               list **cmds, list **args) {
     size_t msg_len = sdslen(msg);
     size_t cnt = 0;
-    char *p = msg;
+    unsigned char *p = (unsigned char*)msg;
 
     // node id
     *node_id = *((uint8_t*)p);

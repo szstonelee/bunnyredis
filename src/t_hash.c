@@ -33,6 +33,17 @@
 
 #include <math.h>
 
+list* hGenericRockForZiplist(uint8_t dbid, sds key, robj *o) {
+    serverAssert(o->encoding == OBJ_ENCODING_ZIPLIST);
+
+    if (o != shared.ziplistRockVal) return NULL;
+
+    list *rock_keys = listCreate();
+    sds rock_key = encode_rock_key_for_ziplist(dbid, key);
+    listAddNodeTail(rock_keys, rock_key);
+    return rock_keys;
+}
+
 static list* hGenericGetOneFieldForRock(client *c) {
     uint8_t dbid = c->db->id;
     redisDb *db = server.db + dbid;
@@ -43,8 +54,12 @@ static list* hGenericGetOneFieldForRock(client *c) {
 
     robj *o = dictGetVal(de_db);
     if (!o) return NULL;
-    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
+    if (o->type != OBJ_HASH) return NULL;
 
+    if (o->encoding == OBJ_ENCODING_ZIPLIST) 
+        return hGenericRockForZiplist(dbid, key, o);
+
+    serverAssert(o->encoding == OBJ_ENCODING_HT);
     dict *dict_hash = o->ptr;
     sds field = c->argv[2]->ptr;
     dictEntry *de_hash = dictFind(dict_hash, field);
@@ -66,8 +81,12 @@ static list* hGenericGetAllFieldForRock(client *c) {
     dictEntry *de_db = dictFind(dict_db, key);
     if (!de_db) return NULL;
     robj *o = dictGetVal(de_db);
-    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
+    if (o->type != OBJ_HASH) return NULL;
+
+    if (o->encoding == OBJ_ENCODING_ZIPLIST) 
+        return hGenericRockForZiplist(dbid, key, o);
     
+    serverAssert(o->encoding == OBJ_ENCODING_HT);
     list *rock_keys = NULL;
     dict *dict_hash = o->ptr;
     dictIterator *di = dictGetIterator(dict_hash);
@@ -961,8 +980,12 @@ list* hmgetCmdForRock(client *c) {
 
     robj *o = dictGetVal(de_db);
     if (!o) return NULL;
-    if (!(o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)) return NULL;
+    if (o->type != OBJ_HASH) return NULL;
+    
+    if (o->encoding == OBJ_ENCODING_ZIPLIST)
+        return hGenericRockForZiplist(dbid, key, o);
 
+    serverAssert(o->encoding == OBJ_ENCODING_HT);
     list *rock_keys = NULL;
     dict *dict_hash = o->ptr;
     for (int i = 2; i < c->argc; i++) {
