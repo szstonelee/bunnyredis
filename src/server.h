@@ -2327,8 +2327,8 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_TAKE_VALUE (1<<1)
 #define HASH_SET_COPY 0
 
-void hashTypeConvert(robj *o, int enc);
-void hashTypeTryConversion(robj *subject, robj **argv, int start, int end);
+void hashTypeConvert(int dbid, robj *o, int enc);
+void hashTypeTryConversion(int dbid, robj *subject, robj **argv, int start, int end);
 int hashTypeExists(robj *o, sds key);
 int hashTypeDelete(robj *o, sds key);
 unsigned long hashTypeLength(const robj *o);
@@ -2344,7 +2344,7 @@ void hashTypeCurrentObject(hashTypeIterator *hi, int what, unsigned char **vstr,
 sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what);
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key);
 robj *hashTypeGetValueObject(robj *o, sds field);
-int hashTypeSet(robj *o, sds field, sds value, int flags);
+int hashTypeSet(int dbid, robj *o, sds field, sds value, int flags);
 robj *hashTypeDup(robj *o);
 int hashZiplistValidateIntegrity(unsigned char *zl, size_t size, int deep);
 

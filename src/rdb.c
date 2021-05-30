@@ -1690,7 +1690,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
 
         /* Too many entries? Use a hash table right from the start. */
         if (len > server.hash_max_ziplist_entries)
-            hashTypeConvert(o, OBJ_ENCODING_HT);
+            hashTypeConvert(-1, o, OBJ_ENCODING_HT);
         else if (deep_integrity_validation) {
             /* In this mode, we need to guarantee that the server won't crash
              * later when the ziplist is converted to a dict.
@@ -1741,7 +1741,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
             {
                 sdsfree(field);
                 sdsfree(value);
-                hashTypeConvert(o, OBJ_ENCODING_HT);
+                hashTypeConvert(-1, o, OBJ_ENCODING_HT);
                 break;
             }
             sdsfree(field);
@@ -1881,7 +1881,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
                     if (hashTypeLength(o) > server.hash_max_ziplist_entries ||
                         maxlen > server.hash_max_ziplist_value)
                     {
-                        hashTypeConvert(o, OBJ_ENCODING_HT);
+                        hashTypeConvert(-1, o, OBJ_ENCODING_HT);
                     }
                 }
                 break;
@@ -1938,7 +1938,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key) {
                 o->type = OBJ_HASH;
                 o->encoding = OBJ_ENCODING_ZIPLIST;
                 if (hashTypeLength(o) > server.hash_max_ziplist_entries)
-                    hashTypeConvert(o, OBJ_ENCODING_HT);
+                    hashTypeConvert(-1, o, OBJ_ENCODING_HT);
                 break;
             default:
                 /* totally unreachable */

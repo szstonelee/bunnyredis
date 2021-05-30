@@ -209,7 +209,17 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
     signalKeyAsReady(db, key, val->type);
     if (server.cluster_enabled) slotToKeyAdd(key->ptr);
 
-    if (val->type == OBJ_STRING) ++db->stat_key_str_cnt;
+    // update the stat of Rock
+    if (val->type == OBJ_STRING && (val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_RAW)) {
+        ++db->stat_key_str_cnt;
+    } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_ZIPLIST) {
+        ++db->stat_key_ziplist_cnt;
+    } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_HT) {
+        // do nothing becuase new hash object can not be added to evict hash candidates
+        // uint8_t dbid = db->id;
+        // sds sds_key = key->ptr;
+        // updateHashLruForKey(dbid, sds_key);
+    }
 }
 
 /* This is a special version of dbAdd() that is used only when loading
@@ -249,7 +259,7 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     robj *old = dictGetVal(de);
     // if set overwrite old wich is not String type, we need incr the cnt
     // if (old->type != OBJ_STRING) ++db->stat_key_str_cnt;
-    if (old->type == OBJ_STRING) {        
+    if (old->type == OBJ_STRING && (old->encoding == OBJ_ENCODING_RAW || old->encoding == OBJ_ENCODING_EMBSTR)) {        
         serverAssert(db->stat_key_str_cnt);
         --db->stat_key_str_cnt;
         if (old == shared.keyRockVal) {
@@ -257,9 +267,6 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
         }
-        serverAssert(val != shared.keyRockVal);
-        if (val->type == OBJ_STRING)
-            ++db->stat_key_str_cnt;
 
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_ZIPLIST) {
         serverAssert(db->stat_key_ziplist_cnt);
@@ -268,9 +275,6 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
             serverAssert(db->stat_key_ziplist_rockval_cnt);
             --db->stat_key_ziplist_rockval_cnt;
         }
-        serverAssert(val != shared.ziplistRockVal);
-        if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_ZIPLIST)
-            ++db->stat_key_ziplist_cnt;
 
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_HT) {
         // the old hash maybe in server.evict_hash_candidates
@@ -287,6 +291,17 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     callback of the module. */
     moduleNotifyKeyUnlink(key,old);
     dictSetVal(db->dict, de, val);
+
+    // update the stat for val
+    if (val->type == OBJ_STRING && (val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)) {
+        ++db->stat_key_str_cnt;
+        serverAssert(val != shared.keyRockVal);
+    } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_ZIPLIST) {
+        serverAssert(val != shared.ziplistRockVal);
+        ++db->stat_key_ziplist_cnt;
+    } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_HT) {
+        // do nothing, because new val is supposed to not add to evict hash candidates
+    }
 
     if (server.lazyfree_lazy_server_del) {
         freeObjAsync(key,old);
@@ -701,7 +716,8 @@ void flushAllDataAndResetRDB(int flags) {
         int saved_dirty = server.dirty;
         rdbSaveInfo rsi, *rsiptr;
         rsiptr = rdbPopulateSaveInfo(&rsi);
-        rdbSave(server.rdb_filename,rsiptr);
+        UNUSED(rsiptr);
+        // rdbSave(server.rdb_filename,rsiptr);     // NOTE: BunnyRedis does not need RDBs
         server.dirty = saved_dirty;
     }
 
@@ -750,28 +766,6 @@ void delGenericCommand(client *c, int lazy) {
     int numdel = 0, j;
 
     for (j = 1; j < c->argc; j++) {
-        // try to remove the evict hash candidates
-        /* NO NEED TO DO, because the following dbAsyncDelete() or dbSyncDelete() will do it 
-        sds key = c->argv[j]->ptr;
-        sds combined = combine_dbid_key(c->db->id, key);
-        removeHashCandidate(combined);
-        free_combine_dbid_key(combined);
-
-        // check the cnt for string
-        dictEntry *de = dictFind(c->db->dict, key);
-        if (de) {
-            robj *o = dictGetVal(de);
-            if (o->type == OBJ_STRING) {
-                if (o == shared.keyRockVal) {
-                    serverAssert(c->db->stat_key_str_rockval_cnt);
-                    --c->db->stat_key_str_rockval_cnt;
-                }
-                serverAssert(c->db->stat_key_str_cnt);
-                --c->db->stat_key_str_cnt;
-            }
-        }
-        */
-
         expireIfNeeded(c->db,c->argv[j]);
         int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
                               dbSyncDelete(c->db,c->argv[j]);
@@ -1167,7 +1161,7 @@ void shutdownCommand(client *c) {
             flags |= SHUTDOWN_NOSAVE;
         } else if (!strcasecmp(c->argv[1]->ptr,"save")) {
             // flags |= SHUTDOWN_SAVE;
-            flags |= SHUTDOWN_NOSAVE;   // save is same as nosave because BunnyRedis does need persistence of Rediss
+            flags |= SHUTDOWN_NOSAVE;   // save is same as nosave because BunnyRedis does need persistence of Redis
         } else {
             addReplyErrorObject(c,shared.syntaxerr);
             return;
@@ -1223,8 +1217,42 @@ void renameCommand(client *c) {
     renameGenericCommand(c,0);
 }
 
+/* When db.c rename one key, we need to restore all rock value in hash with encoding HT */
+static list* hgetAllForOneKeyInRock(uint8_t dbid, sds key, robj *o) {
+    dict* dict_hash = o->ptr;
+    dictIterator *di = dictGetIterator(dict_hash);
+    dictEntry *de;
+    list *rock_keys = NULL;
+    while ((de = dictNext(di))) {
+        sds field = dictGetKey(de);
+        sds val = dictGetVal(de);
+        if (val == shared.hashRockVal) {
+            if (rock_keys == NULL) rock_keys = listCreate();
+            sds rock_key = encode_rock_key_for_hash(dbid, key, field);
+            listAddNodeTail(rock_keys, rock_key);
+        }
+    }
+    return rock_keys;
+}
+
+/* the old key to rename may be string, hash with ziplist or hassh with HT */
+static list* genericRenameOrMoveOrCopyForRock(client *c) {
+    uint8_t dbid = c->db->id;
+    sds key = c->argv[1]->ptr;
+    dict *dict_db = (server.db+dbid)->dict;
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+
+    robj *o = dictGetVal(de_db);
+    if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
+        return hgetAllForOneKeyInRock(dbid, key, o);
+    } else {
+        return stringGenericGetOneKeyForRock(c);        // maybe for string or hash with ziplist
+    }
+}
+
 list* renameCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericRenameOrMoveOrCopyForRock(c);
 }
 
 void renamenxCommand(client *c) {
@@ -1232,7 +1260,7 @@ void renamenxCommand(client *c) {
 }
 
 list* renamenxCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericRenameOrMoveOrCopyForRock(c);
 }
 
 void moveCommand(client *c) {
@@ -1298,7 +1326,7 @@ void moveCommand(client *c) {
 }
 
 list* moveCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericRenameOrMoveOrCopyForRock(c);
 }
 
 void copyCommand(client *c) {
@@ -1404,7 +1432,7 @@ void copyCommand(client *c) {
 }
 
 list* copyCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericRenameOrMoveOrCopyForRock(c);
 }
 
 /* Helper function for dbSwapDatabases(): scans the list of keys that have

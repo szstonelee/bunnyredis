@@ -1086,7 +1086,7 @@ void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, 
     sds key = dictGetKey(de);
     robj *o = dictGetVal(de);
 
-    if (o->type == OBJ_STRING) {
+    if (o->type == OBJ_STRING && (o->encoding == OBJ_ENCODING_RAW || o->encoding == OBJ_ENCODING_EMBSTR)) {
         serverAssert(db->stat_key_str_cnt);
         --db->stat_key_str_cnt;
         if (o == shared.keyRockVal) {
@@ -1132,3 +1132,4 @@ list* genericGetOneKeyForRock(client *c, int index) {
         return hGenericRockForZiplist(dbid, key, o);
     }
 }
+

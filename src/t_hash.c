@@ -111,7 +111,7 @@ static list* hGenericGetAllFieldForRock(client *c) {
 /* Check the length of a number of objects to see if we need to convert a
  * ziplist to a real hash. Note that we only check string encoded objects
  * as their string length can be queried in constant time. */
-void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
+void hashTypeTryConversion(int dbid, robj *o, robj **argv, int start, int end) {
     int i;
 
     if (o->encoding != OBJ_ENCODING_ZIPLIST) return;
@@ -120,7 +120,7 @@ void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
         if (sdsEncodedObject(argv[i]) &&
             sdslen(argv[i]->ptr) > server.hash_max_ziplist_value)
         {
-            hashTypeConvert(o, OBJ_ENCODING_HT);
+            hashTypeConvert(dbid, o, OBJ_ENCODING_HT);
             break;
         }
     }
@@ -273,7 +273,7 @@ int hashTypeExists(robj *o, sds field) {
 #define HASH_SET_TAKE_FIELD (1<<0)
 #define HASH_SET_TAKE_VALUE (1<<1)
 #define HASH_SET_COPY 0
-int hashTypeSet(robj *o, sds field, sds value, int flags) {
+int hashTypeSet(int dbid, robj *o, sds field, sds value, int flags) {
     int update = 0;
 
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
@@ -306,7 +306,7 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
 
         /* Check if the ziplist needs to be converted to a hash table */
         if (hashTypeLength(o) > server.hash_max_ziplist_entries)
-            hashTypeConvert(o, OBJ_ENCODING_HT);
+            hashTypeConvert(dbid, o, OBJ_ENCODING_HT);
     } else if (o->encoding == OBJ_ENCODING_HT) {
         dictEntry *de = dictFind(o->ptr,field);
         if (de) {
@@ -565,9 +565,21 @@ void hashTypeConvertZiplist(robj *o, int enc) {
     }
 }
 
-void hashTypeConvert(robj *o, int enc) {
+/* NOTE: hashTypeConvert may be called by the real client or others like module or rdb
+ * if call from rd or module, dbid < 0 indicating that it does not need update stat of db */
+void hashTypeConvert(int dbid, robj *o, int enc) {
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
         hashTypeConvertZiplist(o, enc);
+        // NOTE: we need to adjust the stat
+        if (dbid >= 0) {
+            redisDb *db = server.db + dbid;
+            serverAssert(db->stat_key_ziplist_cnt);
+            --db->stat_key_ziplist_cnt;
+            if (o == shared.ziplistRockVal) {
+                serverAssert(db->stat_key_ziplist_rockval_cnt);
+                --db->stat_key_ziplist_rockval_cnt;
+            }
+        }
     } else if (o->encoding == OBJ_ENCODING_HT) {
         serverPanic("Not implemented");
     } else {
@@ -712,12 +724,12 @@ void hashTypeRandomElement(robj *hashobj, unsigned long hashsize, ziplistEntry *
 void hsetnxCommand(client *c) {
     robj *o;
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
-    hashTypeTryConversion(o,c->argv,2,3);
+    hashTypeTryConversion(c->db->id, o,c->argv,2,3);
 
     if (hashTypeExists(o, c->argv[2]->ptr)) {
         addReply(c, shared.czero);
     } else {
-        hashTypeSet(o,c->argv[2]->ptr,c->argv[3]->ptr,HASH_SET_COPY);
+        hashTypeSet(c->db->id, o,c->argv[2]->ptr,c->argv[3]->ptr,HASH_SET_COPY);
         addReply(c, shared.cone);
         signalModifiedKey(c,c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_HASH,"hset",c->argv[1],c->db->id);
@@ -738,7 +750,7 @@ void hsetCommand(client *c) {
     }
 
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
-    hashTypeTryConversion(o,c->argv,2,c->argc-1);
+    hashTypeTryConversion(c->db->id, o,c->argv,2,c->argc-1);
 
     evictHash* evict_hash 
         = o->encoding == OBJ_ENCODING_HT ? lookupEvictOfHash(c->db->id, c->argv[1]->ptr) : NULL;
@@ -758,7 +770,7 @@ void hsetCommand(client *c) {
             }
         }
 
-        int upadted = hashTypeSet(o,field,val,HASH_SET_COPY);
+        int upadted = hashTypeSet(c->db->id, o,field,val,HASH_SET_COPY);
         if (!upadted) created++;
 
         // update evict_hash for rock_cnt and lru 
@@ -832,7 +844,7 @@ void hincrbyCommand(client *c) {
     }
     value += incr;
     new = sdsfromlonglong(value);
-    hashTypeSet(o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
+    hashTypeSet(c->db->id, o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
     addReplyLongLong(c,value);
     signalModifiedKey(c,c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_HASH,"hincrby",c->argv[1],c->db->id);
@@ -878,7 +890,7 @@ void hincrbyfloatCommand(client *c) {
     char buf[MAX_LONG_DOUBLE_CHARS];
     int len = ld2string(buf,sizeof(buf),value,LD_STR_HUMAN);
     new = sdsnewlen(buf,len);
-    hashTypeSet(o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
+    hashTypeSet(c->db->id, o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
     addReplyBulkCBuffer(c,buf,len);
     signalModifiedKey(c,c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_HASH,"hincrbyfloat",c->argv[1],c->db->id);
