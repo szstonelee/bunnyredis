@@ -156,6 +156,7 @@ def test_decr(times):
         res = None
         try:
             res = r.decr(name=key, amount=1)
+            is_ok = True
         except redis.exceptions.ResponseError as e:
             # because value is not integer as string
             # print(e)
@@ -242,6 +243,7 @@ def test_incr(times):
         res = None
         try:
             res = r.incr(name=key, amount=1)
+            is_ok = True
         except redis.exceptions.ResponseError as e:
             # because value is not integer as string
             #print(e)
@@ -262,6 +264,7 @@ def test_incrbyfloat(times):
         res = None
         try:
             res = r.incrbyfloat(name=key, amount=2.2)
+            is_ok = True
         except redis.exceptions.ResponseError as e:
             # because value is not integer as string
             # print(e)
@@ -385,26 +388,26 @@ def test_setbit(times):
 
 def _main():
     inject()
-    #print(f"test_append(10000) = {test_append(10000)}")
-    #print(f"test_get(10000) = {test_get(10000)}")
-    #print(f"test_getset(10000) = {test_getset(10000)}")
-    #print(f"test_mget(10000) = {test_mget(10000)}")
-    #print(f"test_mset(10000) = {test_mset(10000)}")
-    #print(f"test_msetnx(10000) = {test_msetnx(10000)}")
-    #print(f"test_set(10000) = {test_set(10000)}")
-    #print(f"test_setnx(10000) = {test_setnx(10000)}")
-    #print(f"test_strlen(10000) = {test_strlen(10000)}")
-    #print(f"test_settrange(10000) = {test_setrange(10000)}")
-    #print(f"test_getrange(10000) = {test_getrange(10000)}")
-    #print(f"test_bitcount(1000) = {test_bitcount(10000)}")
-    #print(f"test_bitfield(10000) = {test_bitfield(10000)}")
-    #print(f"test_bitop(10000) = {test_bitop(10000)}")
-    #print(f"test_bitpos(10000) = {test_bitpos(10000)}")
     print(f"test_decr(100000) = {test_decr(100000)}")
-    #print(f"test_setbit(10000) = {test_setbit(10000)}")
-    #print(f"test_getbit(10000) = {test_getbit(10000)}")
-    #print(f"test_incr(10000) = {test_incr(10000)}")
-    #print(f"test_incrbyfloat(10000) = {test_incrbyfloat(10000)}")
+    print(f"test_incr(100000) = {test_incr(100000)}")
+    print(f"test_incrbyfloat(100000) = {test_incrbyfloat(100000)}")
+    print(f"test_append(10000) = {test_append(10000)}")
+    print(f"test_get(10000) = {test_get(10000)}")
+    print(f"test_getset(10000) = {test_getset(10000)}")
+    print(f"test_mget(10000) = {test_mget(10000)}")
+    print(f"test_mset(10000) = {test_mset(10000)}")
+    print(f"test_msetnx(10000) = {test_msetnx(10000)}")
+    print(f"test_set(10000) = {test_set(10000)}")
+    print(f"test_setnx(10000) = {test_setnx(10000)}")
+    print(f"test_strlen(10000) = {test_strlen(10000)}")
+    print(f"test_settrange(10000) = {test_setrange(10000)}")
+    print(f"test_getrange(10000) = {test_getrange(10000)}")
+    print(f"test_bitcount(1000) = {test_bitcount(10000)}")
+    print(f"test_bitfield(10000) = {test_bitfield(10000)}")
+    print(f"test_bitop(10000) = {test_bitop(10000)}")
+    print(f"test_bitpos(10000) = {test_bitpos(10000)}")
+    print(f"test_setbit(10000) = {test_setbit(10000)}")
+    print(f"test_getbit(10000) = {test_getbit(10000)}")
 
 
 if __name__ == '__main__':
