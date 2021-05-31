@@ -210,7 +210,7 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
     if (server.cluster_enabled) slotToKeyAdd(key->ptr);
 
     // update the stat of Rock
-    if (val->type == OBJ_STRING && (val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_RAW)) {
+    if (val->type == OBJ_STRING && (val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)) {
         ++db->stat_key_str_cnt;
     } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_ZIPLIST) {
         ++db->stat_key_ziplist_cnt;

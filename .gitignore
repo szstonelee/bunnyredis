@@ -40,3 +40,4 @@ compile_commands.json
 redis.code-workspace
 src/bunny-redis
 testtool/.idea
+testtool/__pycache__

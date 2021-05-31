@@ -2770,8 +2770,11 @@ void createSharedObjects(void) {
 
     /* shared object which indicating the value of key(string) in rocksdb */
     shared.keyRockVal = createObject(OBJ_STRING, NULL);
-    shared.keyRockVal->encoding = OBJ_ENCODING_INT;
-    shared.keyRockVal->ptr = (void *)250;          /* 250 means FOOL in Chinese context. */
+    shared.keyRockVal->encoding = OBJ_ENCODING_EMBSTR;
+    /* 250 means FOOL in Chinese context. more than 20 char but lesss than 44 
+     * to guaratee it can not be encoded as OBJ_ENCODING_INT and can be encoded as OBJ_ENCODING_EMBSTR */
+    char key_rock_val_content[] = "I am 250!!!!!!!!!!!!!!";
+    shared.keyRockVal = createStringObject(key_rock_val_content, strlen(key_rock_val_content));
     makeObjectShared(shared.keyRockVal);
 
     /* shared object which indicating the value of hash type of ziplist encoding in rocksdb */

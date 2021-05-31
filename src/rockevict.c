@@ -828,6 +828,7 @@ static void debugReportMemAndKey() {
     for (int i = 0; i < server.dbnum; ++i) {
         int key_cnt = 0;
         int str_cnt = 0;
+        int str_raw_emb_cnt = 0;
         int str_rock_cnt = 0;
         int hash_cnt = 0;
         int pure_hash_cnt = 0;
@@ -841,6 +842,9 @@ static void debugReportMemAndKey() {
             if (o->type == OBJ_STRING)
             {
                 ++str_cnt;
+                if (o->encoding == OBJ_ENCODING_RAW || o->encoding == OBJ_ENCODING_EMBSTR) {
+                    str_raw_emb_cnt++;
+                } 
                 if (o == shared.keyRockVal)
                     ++str_rock_cnt;
             } else if (o->type == OBJ_HASH) {
@@ -861,7 +865,7 @@ static void debugReportMemAndKey() {
             serverLog(LL_WARNING, 
                       "dbid = %d, key_cnt = %d, has_cnt = %d, pure_hash_cnt = %d", 
                       i, key_cnt, hash_cnt, pure_hash_cnt);
-            serverLog(LL_WARNING, "       str cnt(really) = %d, stat of str = %lld", str_cnt, db->stat_key_str_cnt);
+            serverLog(LL_WARNING, "       str cnt(really) = %d, str of raw or embed(really) = %d, stat of str = %lld", str_cnt, str_raw_emb_cnt, db->stat_key_str_cnt);
             serverLog(LL_WARNING, "       str rock cnt(really) = %d, stat of str rock = %lld", str_rock_cnt, db->stat_key_str_rockval_cnt);
             serverLog(LL_WARNING, "       ziplist cnt(really) = %d, stat of ziplist = %lld", ziplist_cnt, db->stat_key_ziplist_cnt);
             serverLog(LL_WARNING, "       ziplist rock cnt(really) = %d, stat of ziplist rock cnt = %lld", ziplist_rock_cnt, db->stat_key_ziplist_rockval_cnt);
