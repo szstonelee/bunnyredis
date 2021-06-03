@@ -44,7 +44,9 @@ list* hGenericRockForZiplist(uint8_t dbid, sds key, robj *o) {
     return rock_keys;
 }
 
-static list* hGenericGetOneFieldForRock(client *c) {
+/* if encoding is ziplist, check whether the whole key is in Rock 
+ * if encoding is hash, check whether the field value is in Rock */
+list* hGenericGetOneFieldForRock(client *c) {
     uint8_t dbid = c->db->id;
     redisDb *db = server.db + dbid;
     dict *dict_db = db->dict;
@@ -56,8 +58,10 @@ static list* hGenericGetOneFieldForRock(client *c) {
     if (!o) return NULL;
     if (o->type != OBJ_HASH) return NULL;
 
-    if (o->encoding == OBJ_ENCODING_ZIPLIST) 
-        return hGenericRockForZiplist(dbid, key, o);
+    if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        // restor the whole fields for one key if ziplist
+        return hGenericRockForZiplist(dbid, key, o);        
+    }
 
     serverAssert(o->encoding == OBJ_ENCODING_HT);
     dict *dict_hash = o->ptr;
@@ -72,6 +76,29 @@ static list* hGenericGetOneFieldForRock(client *c) {
     sds rock_key = encode_rock_key_for_hash(dbid, key, field);
     listAddNodeTail(rock_keys, rock_key);
     return rock_keys;    
+}
+
+/* if the key is ziplist in Rock, return the key
+ * otherwise, return NULL
+ * NOTE: it could be hash encdong and the some fields is in Rock, but it will return NULL,
+ *       because the fields is to be overridden, we do not care about the rock value */
+list* hGenericGetOneKeyOfZiplistForRock(client *c) {
+    uint8_t dbid = c->db->id;
+    redisDb *db = server.db + dbid;
+    dict *dict_db = db->dict;
+    sds key = c->argv[1]->ptr;    
+    dictEntry *de_db = dictFind(dict_db, key);
+    if (!de_db) return NULL;
+
+    robj *o = dictGetVal(de_db);
+    if (!o) return NULL;
+    if (o->type != OBJ_HASH) return NULL;
+
+    if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        return hGenericRockForZiplist(dbid, key, o);
+    } else {
+        return NULL;
+    }
 }
 
 static list* hGenericGetAllFieldForRock(client *c) {
@@ -792,6 +819,10 @@ void hsetnxCommand(client *c) {
     // refreshHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
+list* hsetnxCmdForRock(client *c) {
+    return hGenericGetOneKeyOfZiplistForRock(c);
+}
+
 void hsetCommand(client *c) {
     int i, created = 0;
     robj *o;
@@ -828,6 +859,18 @@ void hsetCommand(client *c) {
     // check to add the hash to evict hash candidates if possible
     if (o->encoding == OBJ_ENCODING_HT && o->refcount != OBJ_SHARED_REFCOUNT)
         checkAddToEvictHashCandidates(c->db->id, created, c->argv[1]->ptr);
+}
+
+/* although hset use multi fields, but the value is overriden, 
+ * so we only revocer the key when the key is encoding as ziplist
+ * if the key is encoding as hash, the field'value will be voerridden,
+ * so no need to restore the field rock value */ 
+list* hsetCmdForRock(client *c) {
+    return hGenericGetOneKeyOfZiplistForRock(c);
+}
+
+list* hmsetCmdForRock(client *c) {
+    return hsetCmdForRock(c);
 }
 
 void hincrbyCommand(client *c) {
@@ -1063,6 +1106,10 @@ void hdelCommand(client *c) {
     addReplyLongLong(c,deleted);
 }
 
+list* hdelCmdForRock(client *c) {
+    return hGenericGetOneKeyOfZiplistForRock(c);
+}
+
 void hlenCommand(client *c) {
     robj *o;
 
@@ -1070,6 +1117,10 @@ void hlenCommand(client *c) {
         checkType(c,o,OBJ_HASH)) return;
 
     addReplyLongLong(c,hashTypeLength(o));
+}
+
+list* hlenCmdForRock(client *c) {
+    return hGenericGetOneKeyOfZiplistForRock(c);
 }
 
 void hstrlenCommand(client *c) {
@@ -1150,6 +1201,10 @@ void hkeysCommand(client *c) {
     genericHgetallCommand(c,OBJ_HASH_KEY);
 }
 
+list* hkeysCmdForRock(client *c) {
+    return hGenericGetOneKeyOfZiplistForRock(c);
+}
+
 void hvalsCommand(client *c) {
     genericHgetallCommand(c,OBJ_HASH_VALUE);
 }
@@ -1175,6 +1230,10 @@ void hexistsCommand(client *c) {
     updatePureHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 
     addReply(c, hashTypeExists(o,c->argv[2]->ptr) ? shared.cone : shared.czero);
+}
+
+list* hexistsCmdForRock(client *c) {
+    return hGenericGetOneKeyOfZiplistForRock(c);
 }
 
 void hscanCommand(client *c) {
@@ -1434,4 +1493,8 @@ void hrandfieldCommand(client *c) {
 
     hashTypeRandomElement(hash,hashTypeLength(hash),&ele,NULL);
     hashReplyFromZiplistEntry(c, &ele);
+}
+
+list* hrandfieldCmdForRock(client *c) {
+    return hGenericGetOneKeyOfZiplistForRock(c);
 }

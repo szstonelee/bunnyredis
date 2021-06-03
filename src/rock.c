@@ -193,13 +193,14 @@ void debugRockCommand(client *c) {
             addReplyError(c, "key found but type is not OBJ_ENCODING_ZIPLIST");
             return;
         }
-
-        if (val == shared.ziplistRockVal) {
-            addReplyError(c, "key found, but the value has already been shared.ziplistRockVal");
+        if (val->refcount == OBJ_SHARED_REFCOUNT) {
+            addReplyErrorFormat(c, "key found type conrrect, but the object is already shared, val == shared.ziplistRockVal is %s",
+                                val == shared.ziplistRockVal ? "yes" : "no");
             return;
         }
 
-        dictSetVal(c->db->dict, de, shared.ziplistRockVal);
+        // dictSetVal(c->db->dict, de, shared.ziplistRockVal);
+        dictGetVal(de) = shared.ziplistRockVal;
         ++c->db->stat_key_ziplist_rockval_cnt;
         unsigned char *zl = val->ptr;
         addRockWriteTaskOfZiplist(c->db->id, key->ptr, zl);

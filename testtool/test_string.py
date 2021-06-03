@@ -9,6 +9,7 @@ r2.config_set(name="bunnymem", value=200<<20)
 
 key_scope = 15_000
 
+
 def inject():
     # Need to see the rock value exist in BunnyRedis
     print("start to inject, total key num = ", key_scope)

@@ -594,11 +594,11 @@ struct redisCommand redisCommandTable[] = {
      "read-only random @sortedset",
      0,NULL,1,1,1,0,0,0},
 
-    {"hset",NULL,1,hsetCommand,-4,
+    {"hset",hsetCmdForRock,1,hsetCommand,-4,
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hsetnx",NULL,1,hsetnxCommand,4,
+    {"hsetnx",hsetnxCmdForRock,1,hsetnxCommand,4,
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
@@ -606,7 +606,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hmset",NULL,1,hsetCommand,-4,
+    {"hmset",hmsetCmdForRock,1,hsetCommand,-4,
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
@@ -622,11 +622,11 @@ struct redisCommand redisCommandTable[] = {
      "write use-memory fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hdel",NULL,1,hdelCommand,-3,
+    {"hdel",hdelCmdForRock,1,hdelCommand,-3,
      "write fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hlen",NULL,0,hlenCommand,2,
+    {"hlen",hlenCmdForRock,0,hlenCommand,2,
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 
@@ -634,7 +634,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hkeys",NULL,0,hkeysCommand,2,
+    {"hkeys",hkeysCmdForRock,0,hkeysCommand,2,
      "read-only to-sort @hash",
      0,NULL,1,1,1,0,0,0},
 
@@ -646,11 +646,11 @@ struct redisCommand redisCommandTable[] = {
      "read-only random @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hexists",NULL,0,hexistsCommand,3,
+    {"hexists",hexistsCmdForRock,0,hexistsCommand,3,
      "read-only fast @hash",
      0,NULL,1,1,1,0,0,0},
 
-    {"hrandfield",NULL,0,hrandfieldCommand,-2,
+    {"hrandfield",hrandfieldCmdForRock,0,hrandfieldCommand,-2,
      "read-only random @hash",
      0,NULL,1,1,1,0,0,0},
 

@@ -33,6 +33,10 @@ sds encode_rock_key_for_string(const uint8_t dbid, sds const string_key);
 sds encode_rock_key_for_ziplist(const uint8_t dbid, sds const string_key);
 sds encode_rock_key_for_hash(const uint8_t dbid, sds const key, sds const field);
 
+/* API for rock to support the following API */
+list* hGenericGetOneFieldForRock(client *c);
+list* hGenericGetOneKeyOfZiplistForRock(client *c);
+
 /* Command check rock value API */
 // keys
 list* copyCmdForRock(client *c);
@@ -74,6 +78,14 @@ list* hincrbyfloatCmdForRock(client *c);
 list* hmgetCmdForRock(client *c);
 list* hstrlenCmdForRock(client *c);
 list* hvalsCmdForRock(client *c);
+list* hsetCmdForRock(client *c);
+list* hsetnxCmdForRock(client *c);
+list* hexistsCmdForRock(client *c);
+list* hkeysCmdForRock(client *c);
+list* hlenCmdForRock(client *c);
+list* hmsetCmdForRock(client *c);
+list* hrandfieldCmdForRock(client *c);
+list* hdelCmdForRock(client *c);
 // hyperloglog
 list* pfaddCmdForRock(client *c);
 list* pfcountCmdForRock(client *c);
