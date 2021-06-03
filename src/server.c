@@ -1674,15 +1674,17 @@ dictType clientIdDictType = {
 };
 
 /* value is an pointer to object of struct evictHash */
-dictType evictHashCandidatesDictType = {
-    dictSdsHash,                /* hash function */
-    NULL,                       /* key dup */
-    NULL,                       /* val dup */
-    dictSdsKeyCompare,          /* key compare */
-    NULL,                       /* key destructor. NOTE: need to be NULL */
-    NULL,                       /* val destructor */
-    NULL                        /* allow to expand */
-};
+
+// dictType evictHashCandidatesDictType = {
+//    dictSdsHash,                /* hash function */
+//    NULL,                       /* key dup */
+//    NULL,                       /* val dup */
+//    dictSdsKeyCompare,          /* key compare */
+//    NULL,                       /* key destructor. NOTE: need to be NULL */
+//    NULL,                       /* val destructor */
+//    NULL                        /* allow to expand */
+// };
+
 
 int htNeedsResize(dict *dict) {
     long long size, used;
@@ -2782,7 +2784,7 @@ void createSharedObjects(void) {
     makeObjectShared(shared.ziplistRockVal);
 
     /* shard object which idicating the value of field in hash type of hash encoding in rocksdb */
-    shared.hashRockVal = sdsnew("hashRockVal");    
+    shared.hashRockVal = NULL;   
 }
 
 void initServerConfig(void) {
@@ -3538,7 +3540,8 @@ void initServer(void) {
     evictHashPoolAlloc();  /* Initialize the LRU hash pool. */
 
     // init 
-    server.evict_hash_candidates = dictCreate(&evictHashCandidatesDictType,NULL);
+    // server.evict_hash_candidates = dictCreate(&evictHashCandidatesDictType,NULL);
+    memset(server.evic_hash_candidates, 0, sizeof(evictHash)*EVICT_HASH_CANDIDATES_MAX_SIZE);
 }
 
 /* Some steps in server initialization need to be done last (after modules

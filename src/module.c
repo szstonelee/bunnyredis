@@ -3161,7 +3161,7 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
 
         /* Handle deletion if value is REDISMODULE_HASH_DELETE. */
         if (value == REDISMODULE_HASH_DELETE) {
-            count += hashTypeDelete(key->value, field->ptr);
+            count += hashTypeDelete(-1, NULL, key->value, field->ptr);
             if (flags & REDISMODULE_HASH_CFIELDS) decrRefCount(field);
             continue;
         }
@@ -3175,7 +3175,7 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
 
         robj *argv[2] = {field,value};
         hashTypeTryConversion(-1, key->value,argv,0,1);
-        int updated = hashTypeSet(-1, key->value, field->ptr, value->ptr, low_flags);
+        int updated = hashTypeSet(-1, NULL, key->value, field->ptr, value->ptr, low_flags);
         count += (flags & REDISMODULE_HASH_COUNT_ALL) ? 1 : updated;
 
         /* If CFIELDS is active, SDS string ownership is now of hashTypeSet(),

@@ -1,38 +1,13 @@
 import string
-import redis
 import random
+from test_common import *
 
-server_ip = "192.168.64.4"
-key_scope = 15_000
 
-pool = redis.ConnectionPool(host=server_ip,
-                            port=8888,
-                            db=0,
-                            decode_responses=True,
-                            encoding='utf-8',
-                            socket_connect_timeout=2)
-r = redis.StrictRedis(connection_pool=pool)
-
-# BunnyRedis node 1
-pool1 = redis.ConnectionPool(host=server_ip,
-                             port=6379,
-                             db=0,
-                             decode_responses=True,
-                             encoding='utf-8',
-                             socket_connect_timeout=2)
-r1 = redis.StrictRedis(connection_pool=pool1)
 r1.config_set(name="bunnymem", value=20<<20)
-
-# BunnyRedis node 2
-pool2 = redis.ConnectionPool(host=server_ip,
-                             port=6380,
-                             db=0,
-                             decode_responses=True,
-                             encoding='utf-8',
-                             socket_connect_timeout=2)
-r2 = redis.StrictRedis(connection_pool=pool2)
+r1.config_set(name="bunnydeny", value="no")
 r2.config_set(name="bunnymem", value=200<<20)
 
+key_scope = 15_000
 
 def inject():
     # Need to see the rock value exist in BunnyRedis
@@ -50,6 +25,7 @@ def inject():
         r.set(name=key, value=val)
         r1.set(name=key, value=val)
     print("inject finish, total key num = ", key_scope)
+    return True
 
 
 def test_append(times):
@@ -384,30 +360,76 @@ def test_setbit(times):
     return True
 
 
+def test_compare_all():
+    check_pool = redis.ConnectionPool(host=server_ip,
+                                      port=real_redis_port,
+                                      db=0,
+                                      decode_responses=True,
+                                      encoding='latin1',
+                                      socket_connect_timeout=2)
+    check_r = redis.StrictRedis(connection_pool=check_pool)
+
+    # BunnyRedis node 1
+    check_pool1 = redis.ConnectionPool(host=server_ip,
+                                       port=bunny_node1_port,
+                                       db=0,
+                                       decode_responses=True,
+                                       encoding='latin1',
+                                       socket_connect_timeout=2)
+    check_r1 = redis.StrictRedis(connection_pool=check_pool1)
+
+    # BunnyRedis node 2
+    check_pool2 = redis.ConnectionPool(host=server_ip,
+                                       port=bunny_node2_port,
+                                       db=0,
+                                       decode_responses=True,
+                                       encoding='latin1',
+                                       socket_connect_timeout=2)
+    check_r2 = redis.StrictRedis(connection_pool=check_pool2)
+
+    time.sleep(2)  # waiting all sync finished
+    db_sz = check_r.dbsize()
+    db1_sz = check_r1.dbsize()
+    db2_sz = check_r2.dbsize()
+    if db_sz != db1_sz or db_sz != db2_sz:
+        print(f"db size not equal, db_sz = {db_sz}, db1_sz = {db1_sz}, db2_sz = {db2_sz}")
+        return False
+
+    keys = check_r.keys(pattern="*")
+    for key in keys:
+        v = check_r.dump(name=key)
+        v1 = check_r1.dump(name=key)
+        v2 = check_r2.dump(name=key)
+        if v != v1 or v != v2:
+            print(f"db dump fail, key = {key}, v = {v}, v1 = {v1}, v2 = {v2}")
+            return False
+
+    return True
 
 
 def _main():
-    inject()
-    print(f"test_decr(100000) = {test_decr(100000)}")
-    print(f"test_incr(100000) = {test_incr(100000)}")
-    print(f"test_incrbyfloat(100000) = {test_incrbyfloat(100000)}")
-    print(f"test_append(10000) = {test_append(10000)}")
-    print(f"test_get(10000) = {test_get(10000)}")
-    print(f"test_getset(10000) = {test_getset(10000)}")
-    print(f"test_mget(10000) = {test_mget(10000)}")
-    print(f"test_mset(10000) = {test_mset(10000)}")
-    print(f"test_msetnx(10000) = {test_msetnx(10000)}")
-    print(f"test_set(10000) = {test_set(10000)}")
-    print(f"test_setnx(10000) = {test_setnx(10000)}")
-    print(f"test_strlen(10000) = {test_strlen(10000)}")
-    print(f"test_settrange(10000) = {test_setrange(10000)}")
-    print(f"test_getrange(10000) = {test_getrange(10000)}")
-    print(f"test_bitcount(1000) = {test_bitcount(10000)}")
-    print(f"test_bitfield(10000) = {test_bitfield(10000)}")
-    print(f"test_bitop(10000) = {test_bitop(10000)}")
-    print(f"test_bitpos(10000) = {test_bitpos(10000)}")
-    print(f"test_setbit(10000) = {test_setbit(10000)}")
-    print(f"test_getbit(10000) = {test_getbit(10000)}")
+    call_with_time(inject)
+    call_with_time(test_decr, 100000)
+    call_with_time(test_incr, 100000)
+    call_with_time(test_incrbyfloat, 100000)
+    call_with_time(test_append, 10000)
+    call_with_time(test_get, 10000)
+    call_with_time(test_getset, 10000)
+    call_with_time(test_mget, 10000)
+    call_with_time(test_mset, 10000)
+    call_with_time(test_msetnx, 10000)
+    call_with_time(test_set, 10000)
+    call_with_time(test_setnx, 10000)
+    call_with_time(test_strlen, 10000)
+    call_with_time(test_setrange, 10000)
+    call_with_time(test_getrange, 10000)
+    call_with_time(test_bitcount, 10000)
+    call_with_time(test_bitfield, 10000)
+    call_with_time(test_bitop, 10000)
+    call_with_time(test_bitpos, 10000)
+    call_with_time(test_setbit, 10000)
+    call_with_time(test_getbit, 10000)
+    call_with_time(test_compare_all)
 
 
 if __name__ == '__main__':

@@ -1103,9 +1103,9 @@ void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, 
         }
 
     } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
-        sds combined = combine_dbid_key(db->id, key); 
-        removeHashCandidate(combined);
-        free_combine_dbid_key(combined);
+        // sds combined = combine_dbid_key(db->id, key); 
+        removeHashCandidate(db->id, key);
+        // free_combine_dbid_key(combined);
     }
 }
 

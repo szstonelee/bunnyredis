@@ -73,6 +73,7 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
             if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
                 updateLFU(val);
             } else {
+                /* 
                 unsigned int clock = LRU_CLOCK();
                 val->lru = clock;
                 // When update val lru, we need update the associated lru in db->key_lrus
@@ -83,6 +84,11 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
                     exit(1);
                 }
                 dictGetVal(lru_de) = (void*)((uint64_t)clock);
+                */
+
+                // NOTE: we do not need the lru in val anymore 
+                // becaue val may be shared.keyRockVal or shared.ziplistRockVal
+                updateKeyLruForOneKey(db->id, key->ptr);
             }
         }
         return val;
@@ -278,9 +284,9 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
 
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_HT) {
         // the old hash maybe in server.evict_hash_candidates
-        sds combined = combine_dbid_key(db->id, key->ptr);
-        removeHashCandidate(combined);
-        free_combine_dbid_key(combined);
+        // sds combined = combine_dbid_key(db->id, key->ptr);
+        removeHashCandidate(db->id, key->ptr);
+        // free_combine_dbid_key(combined);
     }
 
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {

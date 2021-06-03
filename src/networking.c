@@ -2159,29 +2159,21 @@ void processInputBuffer(client *c) {
                 break;
             }
 
-            // NOTE: for test of injecting lots of keys, you can commout out the following code and then enbale it again
-            /*
+            // NOTE: for test of injecting lots of keys, you can use config to set bunny deny
             if (checkMemInProcessBuffer(c) != C_OK) {
-                // int evict_res = performKeyOfStringEvictions(0, 0);    // try to free memory
-                int evict_res = performeKeyOfStringOrHashEvictions(0, 0);
-                if (evict_res == EVICT_ROCK_TIMEOUT) {
-                    serverLog(LL_WARNING, "memory is low!!! memory used = %lu, memory limit = %llu, reject cmd = %s", 
-                              zmalloc_used_memory(), server.bunnymem, (sds)c->argv[0]->ptr);
-                    rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
-                                        c->argv[0]->ptr);
-                    commandProcessed(c);
-                    continue;
-                } else if (evict_res == EVICT_ROCK_NOT_READY) {
-                    serverLog(LL_WARNING, "memory is low and too many keys in RocksDB!!! memory used = %lu, memory limit = %llu, reject cmd = %s", 
-                              zmalloc_used_memory(), server.bunnymem, (sds)c->argv[0]->ptr);
-                    rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
-                                        c->argv[0]->ptr);
-                    commandProcessed(c);
-                    continue;
+                int evict_res = performeKeyOrHashEvictions(0, 0);
+                if (server.bunny_deny) {
+                    if (evict_res == EVICT_ROCK_TIMEOUT || evict_res == EVICT_ROCK_NOT_READY) {
+                        serverLog(LL_WARNING, "memory is low because %s. Memory used = %lu, memory limit = %llu, reject cmd = %s", 
+                                (evict_res == EVICT_ROCK_NOT_READY ? "too many keys in RocksDB" : "not quick to free enough memory"),
+                                zmalloc_used_memory(), server.bunnymem, (sds)c->argv[0]->ptr);
+                        rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
+                                            c->argv[0]->ptr);
+                        commandProcessed(c);
+                        continue;
+                    }
                 }
-            }
-            */
-            
+            }            
 
             // check and set streamWriting
             // If check_stream_res is C_ERR, we can pass through to processCommandAndResetClient()

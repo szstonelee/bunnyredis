@@ -273,7 +273,10 @@ int hashTypeExists(robj *o, sds field) {
 #define HASH_SET_TAKE_FIELD (1<<0)
 #define HASH_SET_TAKE_VALUE (1<<1)
 #define HASH_SET_COPY 0
-int hashTypeSet(int dbid, robj *o, sds field, sds value, int flags) {
+/* NOTE: we changed the original API to add dbid and key. 
+ *       If hashTypeSet() is called from other module, dbid may be negative 
+ *       whcih means it is not for the real enviroment */
+int hashTypeSet(int dbid, sds key, robj *o, sds field, sds value, int flags) {
     int update = 0;
 
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
@@ -307,9 +310,21 @@ int hashTypeSet(int dbid, robj *o, sds field, sds value, int flags) {
         /* Check if the ziplist needs to be converted to a hash table */
         if (hashTypeLength(o) > server.hash_max_ziplist_entries)
             hashTypeConvert(dbid, o, OBJ_ENCODING_HT);
+
     } else if (o->encoding == OBJ_ENCODING_HT) {
+        evictHash *evict_hash = NULL;
+        if (dbid >= 0) evict_hash = lookupEvictOfHash(dbid, key);
+        if (evict_hash) serverAssert(evict_hash->dict_hash == o->ptr);
+
         dictEntry *de = dictFind(o->ptr,field);
         if (de) {
+            // overwrite field, need to check whether old value is rock
+            if (evict_hash) {
+                if (dictGetVal(de) == shared.hashRockVal) {
+                    serverAssert(evict_hash->rock_cnt);
+                    --evict_hash->rock_cnt;
+                }
+            }
             sdsfree(dictGetVal(de));
             if (flags & HASH_SET_TAKE_VALUE) {
                 dictGetVal(de) = value;
@@ -333,6 +348,11 @@ int hashTypeSet(int dbid, robj *o, sds field, sds value, int flags) {
                 v = sdsdup(value);
             }
             dictAdd(o->ptr,f,v);
+            // when add a new field, we need update evict hash too
+            if (evict_hash) {
+                uint64_t clock = LRU_CLOCK();
+                dictAdd(evict_hash->field_lru, f, (void*)clock);
+            } 
         }
     } else {
         serverPanic("Unknown hash encoding");
@@ -342,12 +362,25 @@ int hashTypeSet(int dbid, robj *o, sds field, sds value, int flags) {
      * want this function to be responsible. */
     if (flags & HASH_SET_TAKE_FIELD && field) sdsfree(field);
     if (flags & HASH_SET_TAKE_VALUE && value) sdsfree(value);
+
+    // need refresh lru
+    if (o->encoding == OBJ_ENCODING_HT) {
+        updatePureHashLru(dbid, key, field);
+    } else {
+        serverAssert(o->encoding == OBJ_ENCODING_ZIPLIST);
+        updateKeyLruForOneKey(dbid, key);
+    }
+
     return update;
 }
 
 /* Delete an element from a hash.
- * Return 1 on deleted and 0 on not found. */
-int hashTypeDelete(robj *o, sds field) {
+ * Return 1 on deleted and 0 on not found. 
+ *
+ * NOTE: we changed the original API to add dbid and key. 
+ *       If hashTypeSet() is called from other module, dbid may be negative 
+ *       whcih means it is not for the real enviroment */
+int hashTypeDelete(int dbid, sds key, robj *o, sds field) {
     int deleted = 0;
 
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
@@ -365,13 +398,30 @@ int hashTypeDelete(robj *o, sds field) {
             }
         }
     } else if (o->encoding == OBJ_ENCODING_HT) {
+        int is_rock = 0;
+        dictEntry *de_hash = dictFind((dict*)o->ptr, field);
+        if (de_hash) {
+            if (dictGetVal(de_hash) == shared.hashRockVal)
+                is_rock = 1;
+        }
         if (dictDelete((dict*)o->ptr, field) == C_OK) {
             deleted = 1;
 
             /* Always check if the dictionary needs a resize after a delete. */
             if (htNeedsResize(o->ptr)) dictResize(o->ptr);
-        }
 
+            // delete the lru in pure hash and update rock stat
+            evictHash *evict_hash = NULL;
+            if (dbid >= 0) evict_hash = lookupEvictOfHash(dbid, key);
+            if (evict_hash) {
+                int ret = dictDelete(evict_hash->field_lru, field);
+                serverAssert(ret == DICT_OK);
+                if (is_rock) {
+                    serverAssert(evict_hash->rock_cnt);
+                    --evict_hash->rock_cnt;
+                }
+            }
+        }
     } else {
         serverPanic("Unknown hash encoding");
     }
@@ -572,6 +622,7 @@ void hashTypeConvert(int dbid, robj *o, int enc) {
         hashTypeConvertZiplist(o, enc);
         // NOTE: we need to adjust the stat
         if (dbid >= 0) {
+            serverAssert(o->type == OBJ_HASH);
             redisDb *db = server.db + dbid;
             serverAssert(db->stat_key_ziplist_cnt);
             --db->stat_key_ziplist_cnt;
@@ -729,7 +780,7 @@ void hsetnxCommand(client *c) {
     if (hashTypeExists(o, c->argv[2]->ptr)) {
         addReply(c, shared.czero);
     } else {
-        hashTypeSet(c->db->id, o,c->argv[2]->ptr,c->argv[3]->ptr,HASH_SET_COPY);
+        hashTypeSet(c->db->id, c->argv[1]->ptr, o,c->argv[2]->ptr,c->argv[3]->ptr,HASH_SET_COPY);
         addReply(c, shared.cone);
         signalModifiedKey(c,c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_HASH,"hset",c->argv[1],c->db->id);
@@ -737,7 +788,8 @@ void hsetnxCommand(client *c) {
     }
 
     // try to add the field in evict_hash_candidates if not exist
-    setForHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
+    // Nn need to refresh because hashTypeSet() will do it
+    // refreshHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
 void hsetCommand(client *c) {
@@ -752,50 +804,12 @@ void hsetCommand(client *c) {
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
     hashTypeTryConversion(c->db->id, o,c->argv,2,c->argc-1);
 
-    evictHash* evict_hash 
-        = o->encoding == OBJ_ENCODING_HT ? lookupEvictOfHash(c->db->id, c->argv[1]->ptr) : NULL;
-
     for (i = 2; i < c->argc; i += 2) {
         sds field = c->argv[i]->ptr;
         sds val = c->argv[i+1]->ptr;
 
-        // befere hashTypeSet(), we check whether the old value is rock
-        int is_rock = 0;
-        if (evict_hash) {
-            dict *hash = evict_hash->dict_hash;
-            dictEntry *de = dictFind(hash, field);
-            if (de) {
-                if (dictGetVal(de) == shared.hashRockVal) 
-                    is_rock = 1;
-            }
-        }
-
-        int upadted = hashTypeSet(c->db->id, o,field,val,HASH_SET_COPY);
+        int upadted = hashTypeSet(c->db->id, c->argv[1]->ptr, o,field,val,HASH_SET_COPY);
         if (!upadted) created++;
-
-        // update evict_hash for rock_cnt and lru 
-        if (evict_hash) {
-            dict *hash = evict_hash->dict_hash;
-            dict *lru = evict_hash->field_lru;
-            dictEntry *de = dictFind(hash, field);
-            serverAssert(de);
-            sds field_in_hash = dictGetKey(de);
-            if (!upadted) {
-                serverAssert(is_rock == 0);     // no overwrite, guarantee is_rock == 0
-                dictAdd(lru, field_in_hash, 0);    // lru clock first as zero                
-            } else {
-                // update rock count
-                if (is_rock) {
-                    serverAssert(evict_hash->rock_cnt > 0);
-                    --evict_hash->rock_cnt;
-                }
-            }
-            dictEntry *de_lru = dictFind(lru, field_in_hash);
-            serverAssert(de_lru);
-            dictGetKey(de_lru) = field_in_hash;     // guarantee the owner is the dict
-            uint64_t clock = LRU_CLOCK();
-            dictGetVal(de_lru) = (void*)clock;      // update the lru
-        }
     }
 
     /* HMSET (deprecated) and HSET return value is different. */
@@ -812,8 +826,8 @@ void hsetCommand(client *c) {
     server.dirty += (c->argc - 2)/2;
 
     // check to add the hash to evict hash candidates if possible
-    if (o->encoding == OBJ_ENCODING_HT && evict_hash == NULL)
-        checkAddToEvictHashCandidates(c->db->id, created, c->argv[1]->ptr, o->ptr);
+    if (o->encoding == OBJ_ENCODING_HT && o->refcount != OBJ_SHARED_REFCOUNT)
+        checkAddToEvictHashCandidates(c->db->id, created, c->argv[1]->ptr);
 }
 
 void hincrbyCommand(client *c) {
@@ -844,14 +858,15 @@ void hincrbyCommand(client *c) {
     }
     value += incr;
     new = sdsfromlonglong(value);
-    hashTypeSet(c->db->id, o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
+    hashTypeSet(c->db->id, c->argv[1]->ptr, o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
     addReplyLongLong(c,value);
     signalModifiedKey(c,c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_HASH,"hincrby",c->argv[1],c->db->id);
     server.dirty++;
 
     // try to add the field in evict_hash_candidates if not exist
-    setForHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
+    // NO need to fresh because hashTypeSet() will do it
+    // refreshHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
 list* hincrbyCmdForRock(client *c) {
@@ -890,7 +905,7 @@ void hincrbyfloatCommand(client *c) {
     char buf[MAX_LONG_DOUBLE_CHARS];
     int len = ld2string(buf,sizeof(buf),value,LD_STR_HUMAN);
     new = sdsnewlen(buf,len);
-    hashTypeSet(c->db->id, o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
+    hashTypeSet(c->db->id, c->argv[1]->ptr, o,c->argv[2]->ptr,new,HASH_SET_TAKE_VALUE);
     addReplyBulkCBuffer(c,buf,len);
     signalModifiedKey(c,c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_HASH,"hincrbyfloat",c->argv[1],c->db->id);
@@ -906,7 +921,8 @@ void hincrbyfloatCommand(client *c) {
     decrRefCount(newobj);
 
     // try to add the field in evict_hash_candidates if not exist
-    setForHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
+    // Do not need to refresh because hashTypeSet() will do it
+    // refreshHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
 list* hincrbyfloatCmdForRock(client *c) {
@@ -955,7 +971,7 @@ void hgetCommand(client *c) {
         checkType(c,o,OBJ_HASH)) return;
 
     // update hash lru
-    updateHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
+    updatePureHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 
     addHashFieldToReply(c, o, c->argv[2]->ptr);
 }
@@ -978,7 +994,7 @@ void hmgetCommand(client *c) {
         addHashFieldToReply(c, o, c->argv[i]->ptr);
 
         // update lru
-        updateHashLru(c->db->id, c->argv[1]->ptr, c->argv[i]->ptr);
+        updatePureHashLru(c->db->id, c->argv[1]->ptr, c->argv[i]->ptr);
     }
 }
 
@@ -1022,37 +1038,11 @@ void hdelCommand(client *c) {
     if ((o = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,OBJ_HASH)) return;
 
-    evictHash* evict_hash 
-        = o->encoding == OBJ_ENCODING_HT ? lookupEvictOfHash(c->db->id, c->argv[1]->ptr) : NULL;
-
     for (j = 2; j < c->argc; j++) {
         sds field = c->argv[j]->ptr;
 
-        // check whether it is a rock value
-        int is_rock = 0;
-        if (evict_hash) {
-            dict *hash = evict_hash->dict_hash;
-            dictEntry *de = dictFind(hash, field);
-            if (de) {
-                sds val = dictGetVal(de);
-                if (val == shared.hashRockVal) is_rock = 1;
-            }
-        }
-
-        if (hashTypeDelete(o,field)) {
+        if (hashTypeDelete(c->db->id, c->argv[1]->ptr, o,field)) {
             deleted++;
-
-            // delete the lru
-            if (evict_hash) {
-                dict *lru = evict_hash->field_lru;
-                serverAssert(dictFind(lru, field));
-                dictDelete(lru, field);
-                // update rock stat
-                if (is_rock) {
-                    serverAssert(evict_hash->rock_cnt > 0);
-                    --evict_hash->rock_cnt;
-                }
-            }
 
             if (hashTypeLength(o) == 0) {
                 dbDelete(c->db,c->argv[1]);
@@ -1089,7 +1079,7 @@ void hstrlenCommand(client *c) {
         checkType(c,o,OBJ_HASH)) return;
     addReplyLongLong(c,hashTypeGetValueLength(o,c->argv[2]->ptr));
 
-    updateHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
+    updatePureHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 }
 
 list* hstrlenCmdForRock(client *c) {
@@ -1147,7 +1137,7 @@ void genericHgetallCommand(client *c, int flags) {
     }
 
     // refresh all lru for the key in client db
-    updateHashLruForKey(c->db->id, c->argv[1]->ptr);
+    updatePureHashLruForWholeKey(c->db->id, c->argv[1]->ptr);
 
     hashTypeReleaseIterator(hi);
 
@@ -1182,7 +1172,7 @@ void hexistsCommand(client *c) {
         checkType(c,o,OBJ_HASH)) return;
 
     // update lru
-    updateHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
+    updatePureHashLru(c->db->id, c->argv[1]->ptr, c->argv[2]->ptr);
 
     addReply(c, hashTypeExists(o,c->argv[2]->ptr) ? shared.cone : shared.czero);
 }

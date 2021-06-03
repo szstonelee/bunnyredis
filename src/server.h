@@ -1186,6 +1186,19 @@ typedef enum childInfoType {
     CHILD_INFO_TYPE_MODULE_COW_SIZE
 } childInfoType;
 
+#define EVICT_HASH_CANDIDATES_MAX_SIZE  16
+/* stored in dict of server.evict_hash_candidates as value */
+typedef struct evictHash {
+    int used;
+    uint8_t dbid;
+    // sds combined_key;
+    sds key;
+    dict *field_lru;
+    dict *dict_hash;     // point to the hash dictionary
+    long long rock_cnt;
+} evictHash;
+
+
 struct redisServer {
     /* General */
     pid_t pid;                  /* Main process pid. */
@@ -1666,8 +1679,10 @@ struct redisServer {
     uint64_t    streamCurrentClientId;  /* right now stream client id. NOTE: may be virtual client ID */
 
     unsigned long long bunnymem;   /* Max number of memory bytes to use, at most is the size of all keys */
+    int bunny_deny;                /* when not zero, if memory is over limmit, the client's command which may use memory will be denied */
 
-    dict *evict_hash_candidates;    /* evict hash candidates for all dbs */
+    // dict *evict_hash_candidates;    /* evict hash candidates for all dbs */
+    evictHash evic_hash_candidates[EVICT_HASH_CANDIDATES_MAX_SIZE];
 };
 
 client* lookupStreamCurrentClient();
@@ -2330,7 +2345,7 @@ robj *setTypeDup(robj *o);
 void hashTypeConvert(int dbid, robj *o, int enc);
 void hashTypeTryConversion(int dbid, robj *subject, robj **argv, int start, int end);
 int hashTypeExists(robj *o, sds key);
-int hashTypeDelete(robj *o, sds key);
+int hashTypeDelete(int dbid, sds key, robj *o, sds field);      // NOTE: chaned from Redis ogirinal source
 unsigned long hashTypeLength(const robj *o);
 hashTypeIterator *hashTypeInitIterator(robj *subject);
 void hashTypeReleaseIterator(hashTypeIterator *hi);
@@ -2344,7 +2359,7 @@ void hashTypeCurrentObject(hashTypeIterator *hi, int what, unsigned char **vstr,
 sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what);
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key);
 robj *hashTypeGetValueObject(robj *o, sds field);
-int hashTypeSet(int dbid, robj *o, sds field, sds value, int flags);
+int hashTypeSet(int dbid, sds key, robj *o, sds field, sds value, int flags);   // NOTE: chaned from Redis ogirinal source
 robj *hashTypeDup(robj *o);
 int hashZiplistValidateIntegrity(unsigned char *zl, size_t size, int deep);
 
