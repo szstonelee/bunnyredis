@@ -157,6 +157,8 @@ int dbAsyncDelete(redisDb *db, robj *key) {
     dictEntry *lru_de = dictUnlink(db->key_lrus, key->ptr);
     if (de) {
         serverAssert(lru_de);
+        update_rock_stat_and_try_delete_evict_candidate_for_db_delete(db, de);
+
         robj *val = dictGetVal(de);
 
         /* Tells the module that the key has been unlinked from the database. */
@@ -182,7 +184,6 @@ int dbAsyncDelete(redisDb *db, robj *key) {
     /* Release the key-val pair, or just the key if we set the val
      * field to NULL in order to lazy free it later. */
     if (de) {
-        update_rock_stat_and_try_delete_evict_candidate_for_db_delete(db, de);
 
         dictFreeUnlinkedEntry(db->dict,de);
         dictFreeUnlinkedEntry(db->key_lrus, lru_de);

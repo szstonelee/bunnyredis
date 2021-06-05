@@ -5113,7 +5113,7 @@ void dumpCommand(client *c) {
 }
 
 list* dumpCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyForRock(c);
 }
 
 /* RESTORE key ttl serialized-value [REPLACE] */

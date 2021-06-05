@@ -33,103 +33,6 @@
 
 #include <math.h>
 
-list* hGenericRockForZiplist(uint8_t dbid, sds key, robj *o) {
-    serverAssert(o->encoding == OBJ_ENCODING_ZIPLIST);
-
-    if (o != shared.ziplistRockVal) return NULL;
-
-    list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_ziplist(dbid, key);
-    listAddNodeTail(rock_keys, rock_key);
-    return rock_keys;
-}
-
-/* if encoding is ziplist, check whether the whole key is in Rock 
- * if encoding is hash, check whether the field value is in Rock */
-list* hGenericGetOneFieldForRock(client *c) {
-    uint8_t dbid = c->db->id;
-    redisDb *db = server.db + dbid;
-    dict *dict_db = db->dict;
-    sds key = c->argv[1]->ptr;    
-    dictEntry *de_db = dictFind(dict_db, key);
-    if (!de_db) return NULL;
-
-    robj *o = dictGetVal(de_db);
-    if (!o) return NULL;
-    if (o->type != OBJ_HASH) return NULL;
-
-    if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-        // restor the whole fields for one key if ziplist
-        return hGenericRockForZiplist(dbid, key, o);        
-    }
-
-    serverAssert(o->encoding == OBJ_ENCODING_HT);
-    dict *dict_hash = o->ptr;
-    sds field = c->argv[2]->ptr;
-    dictEntry *de_hash = dictFind(dict_hash, field);
-    if (!de_hash) return NULL;
-
-    sds val = dictGetVal(de_hash);
-    if (val != shared.hashRockVal) return NULL;
-
-    list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_hash(dbid, key, field);
-    listAddNodeTail(rock_keys, rock_key);
-    return rock_keys;    
-}
-
-/* if the key is ziplist in Rock, return the key
- * otherwise, return NULL
- * NOTE: it could be hash encdong and the some fields is in Rock, but it will return NULL,
- *       because the fields is to be overridden, we do not care about the rock value */
-list* hGenericGetOneKeyOfZiplistForRock(client *c) {
-    uint8_t dbid = c->db->id;
-    redisDb *db = server.db + dbid;
-    dict *dict_db = db->dict;
-    sds key = c->argv[1]->ptr;    
-    dictEntry *de_db = dictFind(dict_db, key);
-    if (!de_db) return NULL;
-
-    robj *o = dictGetVal(de_db);
-    if (!o) return NULL;
-    if (o->type != OBJ_HASH) return NULL;
-
-    if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-        return hGenericRockForZiplist(dbid, key, o);
-    } else {
-        return NULL;
-    }
-}
-
-static list* hGenericGetAllFieldForRock(client *c) {
-    uint8_t dbid = c->db->id;
-    sds key = c->argv[1]->ptr;
-    dict *dict_db = (server.db+dbid)->dict;
-    dictEntry *de_db = dictFind(dict_db, key);
-    if (!de_db) return NULL;
-    robj *o = dictGetVal(de_db);
-    if (o->type != OBJ_HASH) return NULL;
-
-    if (o->encoding == OBJ_ENCODING_ZIPLIST) 
-        return hGenericRockForZiplist(dbid, key, o);
-    
-    serverAssert(o->encoding == OBJ_ENCODING_HT);
-    list *rock_keys = NULL;
-    dict *dict_hash = o->ptr;
-    dictIterator *di = dictGetIterator(dict_hash);
-    dictEntry *de;
-    while ((de = dictNext(di))) {
-        sds field = dictGetKey(de);
-        sds val = dictGetVal(de);
-        if (val == shared.hashRockVal) {
-            if (rock_keys == NULL) rock_keys = listCreate();
-            sds rock_key = encode_rock_key_for_hash(dbid, key, field);
-            listAddNodeTail(rock_keys, rock_key);
-        }
-    }
-    dictReleaseIterator(di);
-    return rock_keys;
-}
 
 /*-----------------------------------------------------------------------------
  * Hash type API
@@ -195,7 +98,15 @@ sds hashTypeGetFromHashTable(robj *o, sds field) {
 
     de = dictFind(o->ptr, field);
     if (de == NULL) return NULL;
-    return dictGetVal(de);
+
+    // NOTE: because shared.hashRockVal is NULL, and we do not want to lookup it from RocksDb
+    // for some commands like hexists. So we need to check and return a mock one.
+    // return dictGetVal(de);
+    if (dictGetVal(de) == shared.hashRockVal) {
+        return shared.mockVirtualHashRockVal;
+    } else {
+        return dictGetVal(de);
+    }
 }
 
 /* Higher level function of hashTypeGet*() that returns the hash value

@@ -1218,7 +1218,7 @@ void pfaddCommand(client *c) {
 }
 
 list* pfaddCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 /* PFCOUNT var -> approximated cardinality of set. */

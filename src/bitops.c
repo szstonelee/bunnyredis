@@ -564,7 +564,7 @@ void setbitCommand(client *c) {
 }
 
 list* setbitCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 /* GETBIT key offset */
@@ -595,7 +595,7 @@ void getbitCommand(client *c) {
 }
 
 list* getbitCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 /* BITOP op_name target_key src_key1 src_key2 src_key3 ... src_keyN */
@@ -861,7 +861,7 @@ void bitcountCommand(client *c) {
 }
 
 list* bitcountCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 /* BITPOS key bit [start [end]] */
@@ -943,7 +943,7 @@ void bitposCommand(client *c) {
 }
 
 list* bitposCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 /* BITFIELD key subcommmand-1 arg ... subcommand-2 arg ... subcommand-N ...
@@ -1201,7 +1201,7 @@ void bitfieldCommand(client *c) {
 }
 
 list* bitfieldCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void bitfieldroCommand(client *c) {

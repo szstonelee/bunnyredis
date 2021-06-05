@@ -1015,7 +1015,8 @@ struct sharedObjectsStruct {
     sds minstring, maxstring;
     robj *keyRockVal;       /* special shared object indicating the value saved for key (right now type is String) in rocksdb */
     robj *ziplistRockVal;   /* special shared object indicating the value saved for hash with encoding of ziplist in rocksdb */
-    sds  hashRockVal;       /* special shared object indicating the value saved for field of hash type with hash encoding in rocksdb */
+    sds hashRockVal;       /* special shared object indicating the value saved for field of hash type with hash encoding in rocksdb */
+    sds mockVirtualHashRockVal;     /* to represent the hashRockVal */
 };
 
 /* ZSETs use a specialized version of Skiplists */

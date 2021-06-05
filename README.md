@@ -1,4 +1,10 @@
 
+测试注意：
+```
+r-server --port 8888 --bind 0.0.0.0 --save "" --appendonly no
+对于BunnyRedis，请清空channel
+```
+
 NOTE: Linux下，需要设置足够大的open files limit，否则，RocksDB产生很多文件，可能导致crash，方法如下：
 ```
 sudo -i

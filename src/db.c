@@ -523,12 +523,12 @@ long long emptyDb(int dbnum, int flags, void(callback)(void*)) {
     /* Empty redis database structure. */
     removed = emptyDbStructure(server.db, dbnum, async, callback);
 
+    /* when empty db, we need to remove the evict hash candidates with the dbid */
     if (dbnum == -1) {
         for (uint8_t dbid = 0; dbid < server.dbnum; ++dbid)
             clearEvictByEmptyDb(dbid);
     } else {
-        uint8_t dbid = (uint8_t)dbnum;
-        clearEvictByEmptyDb(dbid);
+        clearEvictByEmptyDb(dbnum);
     }
 
     /* Flush slots to keys map if enable cluster, we can flush entire
@@ -1224,6 +1224,7 @@ void renameCommand(client *c) {
 }
 
 /* When db.c rename one key, we need to restore all rock value in hash with encoding HT */
+/*
 static list* hgetAllForOneKeyInRock(uint8_t dbid, sds key, robj *o) {
     dict* dict_hash = o->ptr;
     dictIterator *di = dictGetIterator(dict_hash);
@@ -1240,25 +1241,30 @@ static list* hgetAllForOneKeyInRock(uint8_t dbid, sds key, robj *o) {
     }
     return rock_keys;
 }
+*/
 
 /* the old key to rename may be string, hash with ziplist or hassh with HT */
+/*
 static list* genericRenameOrMoveOrCopyForRock(client *c) {
+
     uint8_t dbid = c->db->id;
     sds key = c->argv[1]->ptr;
     dict *dict_db = (server.db+dbid)->dict;
+
     dictEntry *de_db = dictFind(dict_db, key);
     if (!de_db) return NULL;
 
     robj *o = dictGetVal(de_db);
-    if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
-        return hgetAllForOneKeyInRock(dbid, key, o);
+    if (o->type == OBJ_HASH) {
+        return hGenericGetAllFieldForRock(c);
     } else {
-        return stringGenericGetOneKeyForRock(c);        // maybe for string or hash with ziplist
+        return genericGetOneKeyExcludePureHashForRock(c, 1);
     }
 }
+*/
 
 list* renameCmdForRock(client *c) {
-    return genericRenameOrMoveOrCopyForRock(c);
+    return genericGetOneKeyForRock(c);
 }
 
 void renamenxCommand(client *c) {
@@ -1266,7 +1272,7 @@ void renamenxCommand(client *c) {
 }
 
 list* renamenxCmdForRock(client *c) {
-    return genericRenameOrMoveOrCopyForRock(c);
+    return genericGetOneKeyForRock(c);
 }
 
 void moveCommand(client *c) {
@@ -1332,7 +1338,7 @@ void moveCommand(client *c) {
 }
 
 list* moveCmdForRock(client *c) {
-    return genericRenameOrMoveOrCopyForRock(c);
+    return genericGetOneKeyForRock(c);
 }
 
 void copyCommand(client *c) {
@@ -1438,7 +1444,7 @@ void copyCommand(client *c) {
 }
 
 list* copyCmdForRock(client *c) {
-    return genericRenameOrMoveOrCopyForRock(c);
+    return genericGetOneKeyForRock(c);
 }
 
 /* Helper function for dbSwapDatabases(): scans the list of keys that have

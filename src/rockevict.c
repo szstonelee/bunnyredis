@@ -1073,7 +1073,7 @@ static int addToHashCandidatesIfPossible(const uint8_t dbid, const sds key) {
  *     dict size == 2001, added = 2. check candidates
  *     dict size == 1999, added = 999. no check 
  * RETURN: if added to candidates, return 1. otherwise 0 */
-#define CHECK_INTERVAL 1024
+#define CHECK_INTERVAL 128
 int checkAddToEvictHashCandidates(const uint8_t dbid, const size_t added, sds key) {
     if (added == 0) return 0;
     
@@ -1107,9 +1107,10 @@ void updatePureHashLru(uint8_t dbid, sds key, sds field) {
     if (evict_hash) {
         dict *lru = evict_hash->field_lru;
         dictEntry *de = dictFind(lru, field);
-        serverAssert(de);
-        uint64_t clock = LRU_CLOCK();
-        dictGetVal(de) = (void*)clock;
+        if (de) {
+            uint64_t clock = LRU_CLOCK();
+            dictGetVal(de) = (void*)clock;
+        }
     }
 }
 

@@ -3,7 +3,7 @@ import string
 from test_common import *
 
 
-key_scope = 400
+key_scope = 500
 field_scope = 10_000
 
 # BunnyRedis node 1
@@ -16,8 +16,7 @@ r2.config_set(name="bunnymem", value=1<<30)
 
 def inject():
     # Need to see the rock value exist in BunnyRedis
-    print("start to inject, total key num = ", key_scope)
-    r.flushall()
+    print(f"start to inject hash, key_scope = {key_scope}, field_scope = {field_scope}")
     keys = []
     for i in range(0, key_scope):
         key = "hash_" + str(i)
@@ -39,8 +38,8 @@ def inject():
                 added = r.hset(name=key, key=field, value=val)
                 r1.hset(name=key, key=field, value=val)
                 field_cnt = field_cnt + added
-                if field_cnt % 10000 == 0:
-                    print(f"cur field_cnt = {field_cnt}, fi = {fi}")
+                #if field_cnt % 10000 == 0:
+                #    print(f"cur field_cnt = {field_cnt}, fi = {fi}")
         else:
             # make val length bigger than hash-max-ziplist-value. check redis.conf
             field_num = random.randint(6, 10)
@@ -55,8 +54,8 @@ def inject():
                 added = r.hset(name=key, key=field, value=val)
                 r1.hset(name=key, key=field, value=val)
                 field_cnt = field_cnt + added
-                if field_cnt % 10000 == 0:
-                    print(f"cur field_cnt = {field_cnt}, fi = {fi}")
+                #if field_cnt % 10000 == 0:
+                #    print(f"cur field_cnt = {field_cnt}, fi = {fi}")
 
     print(f"inject hash finish, key num = {key_scope}, field total cnt = {field_cnt}")
     return True
@@ -87,7 +86,7 @@ def test_hexists(times):
         res = r.hexists(name=key, key=field)
         res1 = r1.hexists(name=key, key=field)
         if res != res1:
-            print(f"hexists failed, key = {key}, res = {res}, res1 = {res1}")
+            print(f"hexists failed, key = {key}, field = {field}, res = {res}, res1 = {res1}")
             return False
 
     return True
@@ -199,37 +198,103 @@ def test_hstrlen(times):
     return True
 
 
-def debug_hget():
-    keys = r.keys("*")
-    for key in keys:
-        en = r.object(infotype="encoding", key=key)
-        if en != "ziplist":
-            continue
+def test_hdel(times):
+    for _ in range(0, times):
+        key = "hash_" + str(random.randint(0, key_scope * 2))
+        field_num = random.randint(1, 100)
+        fields = []
+        for i in range(field_num):
+            if i % 10 == 0:
+                field = "zl_" + str(random.randint(0, 20))
+            else:
+                field = "field_" + str(random.randint(0, field_scope *2))
+            fields.append(field)
+        res = r.hdel(key, *fields)
+        res1 = r1.hdel(key, *fields)
 
-        fields = r.hkeys(name=key)
-        all_same = True
-        for field in fields:
-            res = r.hget(name=key, key=field)
-            res1 = r2.hget(name=key, key=field)
+        if res != res1:
+            print(f"hdel failed, key = {key}, res = {res}, res1 = {res1}")
+            return False
+
+    return True
+
+
+def test_hincrby(times):
+    for _ in range(0, times):
+        key = "hash_" + str(random.randint(0, key_scope * 2))
+        if random.randint(0,9) % 10 == 0:
+            field = "zl_" + str(random.randint(0, 20))
+        else:
+            field = "field_" + str(random.randint(0, field_scope *2))
+        try:
+            res = r.hincrby(name=key, key=field, amount=2)
+            res1 = r1.hincrby(name=key, key=field, amount=2)
             if res != res1:
-                all_same = False
-        if all_same:
-            print(f"all same for key = {key}")
+                print(f"hincrby failed, key = {key}, res = {res}, res1 = {res1}")
+                return False
+        except redis.exceptions.ResponseError as e:
+            pass        # not an integer
+
+    return True
+
+
+def test_hincrbyfloat(times):
+    for _ in range(0, times):
+        key = "hash_" + str(random.randint(0, key_scope * 2))
+        if random.randint(0,9) % 10 == 0:
+            field = "zl_" + str(random.randint(0, 20))
+        else:
+            field = "field_" + str(random.randint(0, field_scope *2))
+        try:
+            res = r.hincrbyfloat(name=key, key=field, amount=1.1)
+            res1 = r1.hincrbyfloat(name=key, key=field, amount=1.1)
+            if res != res1:
+                print(f"hincrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
+                return False
+        except redis.exceptions.ResponseError as e:
+            pass        # not an integer
+
+    return True
+
+
+def test_hsetnx(times):
+    for _ in range(0, times):
+        key = "hash_" + str(random.randint(0, key_scope * 2))
+        if random.randint(0,9) % 10 == 0:
+            field = "zl_" + str(random.randint(0, 20))
+        else:
+            field = "field_" + str(random.randint(0, field_scope *2))
+        value = "value_with_hsetex_" + str(random.randint(0, 1000))
+        res = r.hsetnx(name=key, key=field, value=value)
+        res1 = r1.hsetnx(name=key, key=field, value=value)
+
+        if res != res1:
+            print(f"hsetnx failed, key = {key}, res = {res}, res1 = {res1}")
+            return False
 
     return True
 
 
 def _main():
-    #call_with_time(inject)
-    #debug_hget()
-    #call_with_time(test_hget, 100_000)
-    #call_with_time(test_hexists, 100_000)
-    #call_with_time(test_hgetall, 100_000)
-    #call_with_time(test_hkeys, 100_000)
-    #call_with_time(test_hlen, 100_000)
-    #call_with_time(test_hmget, 20_000)
-    #call_with_time(test_hvals, 100_000)
+    call_with_time(inject)
+    call_with_time(compare_all)
+    call_with_time(test_hexists, 100_000)
+    call_with_time(test_hgetall, 100_000)
+    call_with_time(test_hincrby, 100_000)
+    call_with_time(compare_all)
+    call_with_time(test_hget, 100_000)
+    call_with_time(test_hincrbyfloat, 100_000)
+    call_with_time(compare_all)
+    call_with_time(test_hmget, 20_000)
+    call_with_time(test_hdel, 100)
+    call_with_time(compare_all)
+    call_with_time(test_hsetnx, 100_000)
+    call_with_time(compare_all)
+    call_with_time(test_hvals, 100_000)
+    call_with_time(test_hkeys, 100_000)
+    call_with_time(test_hlen, 100_000)
     call_with_time(test_hstrlen, 100_000)
+    call_with_time(compare_all)
 
 
 if __name__ == '__main__':

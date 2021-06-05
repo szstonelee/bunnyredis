@@ -1306,7 +1306,19 @@ NULL
 
 list* objectCmdForRock(client *c) {
     if (c->argc == 3) {
-        return genericGetOneKeyForRock(c, 2);       // object command key is the third argument
+        // we only need to restore val if it is string or ziplist
+        // for pure hash, no need to restore field rock value
+        sds key = c->argv[2]->ptr;
+        redisDb *db = server.db + c->db->id;
+        dictEntry *de_db = dictFind(db->dict, key);
+        if (!de_db) return NULL;
+
+        robj *o = dictGetVal(de_db);
+        if (o->type == OBJ_STRING || (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_ZIPLIST)) {
+            return genericGetOneKeyExcludePureHashForRock(c, 2);       // object command key is the third argument
+        } else {
+            return NULL;
+        }
     } else {
         return NULL;
     }

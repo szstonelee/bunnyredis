@@ -2785,6 +2785,7 @@ void createSharedObjects(void) {
 
     /* shard object which idicating the value of field in hash type of hash encoding in rocksdb */
     shared.hashRockVal = NULL;   
+    shared.mockVirtualHashRockVal = sdsnew("mockVirtualHashRockVal");
 }
 
 void initServerConfig(void) {

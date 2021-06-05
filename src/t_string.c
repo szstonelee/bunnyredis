@@ -34,24 +34,11 @@
 
 /* NOTE: the name is stirng, but accutually it could be hash with ziplist encoding 
  *       because db.c will call it. */
+/*
 list* stringGenericGetOneKeyForRock(client *c) {
     return genericGetOneKeyForRock(c, 1);       // always assume the second argument (index == 1)
-    /*
-    uint8_t dbid = c->db->id;
-    dict *dict_db = (server.db+dbid)->dict;
-    sds key = c->argv[1]->ptr;
-    dictEntry *de_db = dictFind(dict_db, key);
-    if (!de_db) return NULL;
-    robj *o = dictGetVal(de_db);
-    if (o->type != OBJ_STRING) return NULL;
-    if (o != shared.keyRockVal) return NULL;
-
-    list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_string(dbid, key);
-    listAddNodeTail(rock_keys, rock_key);
-    return rock_keys;
-    */
 }
+*/
 
 /* assume argv[start_index] to the end are searching keys, step is the jump step for arg.
  * NOTE: the name of the function has stirng, and it only support string 
@@ -322,7 +309,7 @@ void setnxCommand(client *c) {
 }
 
 list* setnxCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void setexCommand(client *c) {
@@ -354,21 +341,7 @@ void getCommand(client *c) {
 }
 
 list* getCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
-    /*
-    sds key = c->argv[1]->ptr;
-    dict *dict_db = (server.db+c->db->id)->dict;
-    dictEntry *de_db = dictFind(dict_db, key);
-    if (!de_db) return NULL;
-    robj *o = dictGetVal(de_db);
-    if (o->type != OBJ_STRING) return NULL;
-    if (o != shared.keyRockVal) return NULL;        
-
-    list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_string(c->db->id, key); 
-    listAddNodeTail(rock_keys, rock_key);
-    return rock_keys;
-    */
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 /*
@@ -482,7 +455,7 @@ void getdelCommand(client *c) {
 }
 
 list* getdelCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 
@@ -498,7 +471,7 @@ void getsetCommand(client *c) {
 }
 
 list* getsetCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void setrangeCommand(client *c) {
@@ -562,7 +535,7 @@ void setrangeCommand(client *c) {
 }
 
 list* setrangeCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void getrangeCommand(client *c) {
@@ -607,7 +580,7 @@ void getrangeCommand(client *c) {
 }
 
 list* getrangeCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void mgetCommand(client *c) {
@@ -738,7 +711,7 @@ void incrCommand(client *c) {
 }
 
 list* incrCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void decrCommand(client *c) {
@@ -746,7 +719,7 @@ void decrCommand(client *c) {
 }
 
 list* decrCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void incrbyCommand(client *c) {
@@ -757,7 +730,7 @@ void incrbyCommand(client *c) {
 }
 
 list* incrbyCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void decrbyCommand(client *c) {
@@ -768,7 +741,7 @@ void decrbyCommand(client *c) {
 }
 
 list* decrbyCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void incrbyfloatCommand(client *c) {
@@ -805,7 +778,7 @@ void incrbyfloatCommand(client *c) {
 }
 
 list* incrbyfloatCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void appendCommand(client *c) {
@@ -842,18 +815,7 @@ void appendCommand(client *c) {
 }
 
 list* appendCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
-    /*
-    robj *key = c->argv[1];
-    robj *val = lookupKeyRead(c->db, key);
-
-    if (val != shared.keyRockVal) return NULL;        
-
-    list *rock_keys = listCreate();
-    sds rock_key = encode_rock_key_for_string(c->db->id, key->ptr); 
-    listAddNodeTail(rock_keys, rock_key);
-    return rock_keys;
-    */
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 void strlenCommand(client *c) {
@@ -864,7 +826,7 @@ void strlenCommand(client *c) {
 }
 
 list* strlenCmdForRock(client *c) {
-    return stringGenericGetOneKeyForRock(c);
+    return genericGetOneKeyExcludePureHashForRock(c, 1);
 }
 
 /* STRALGO -- Implement complex algorithms on strings.
