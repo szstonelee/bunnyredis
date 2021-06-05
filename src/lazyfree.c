@@ -209,11 +209,13 @@ void freeObjAsync(robj *key, robj *obj) {
  * create a new empty set of hash tables and scheduling the old ones for
  * lazy freeing. */
 void emptyDbAsync(redisDb *db) {
-    dict *oldht1 = db->dict, *oldht2 = db->expires;
+    //  Note: We need add key_lrus for async empty db
+    dict *oldht1 = db->dict, *oldht2 = db->expires, *oldht3 = db->key_lrus;
     db->dict = dictCreate(&dbDictType,NULL);
     db->expires = dictCreate(&dbExpiresDictType,NULL);
+    db->key_lrus = dictCreate(&keyLruDictType, NULL);
     atomicIncr(lazyfree_objects,dictSize(oldht1));
-    bioCreateLazyFreeJob(lazyfreeFreeDatabase,2,oldht1,oldht2);
+    bioCreateLazyFreeJob(lazyfreeFreeDatabase,2,oldht1,oldht2, oldht3);
 }
 
 /* Release the radix tree mapping Redis Cluster keys to slots asynchronously. */

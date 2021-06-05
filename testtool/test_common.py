@@ -188,6 +188,11 @@ def compare_all():
     return True
 
 
+def flush_all_db():
+    r.flushall()
+    r1.flushall()
+
+
 def _main():
     # call_with_time(compare_all)
     compare_all()

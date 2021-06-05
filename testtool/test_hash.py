@@ -276,6 +276,7 @@ def test_hsetnx(times):
 
 
 def _main():
+    flush_all_db()
     call_with_time(inject)
     call_with_time(compare_all)
     call_with_time(test_hexists, 100_000)

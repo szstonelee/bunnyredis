@@ -477,10 +477,17 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
         } else {
             dictEmpty(dbarray[j].dict,callback);
             dictEmpty(dbarray[j].expires,callback);
+            // we need empty the additional lru
+            dictEmpty(dbarray[j].key_lrus,callback);
         }
         /* Because all keys of database are removed, reset average ttl. */
         dbarray[j].avg_ttl = 0;
         dbarray[j].expires_cursor = 0;
+        // reset stat
+        dbarray[j].stat_key_str_cnt = 0;
+        dbarray[j].stat_key_str_rockval_cnt = 0;
+        dbarray[j].stat_key_ziplist_cnt = 0;
+        dbarray[j].stat_key_ziplist_rockval_cnt = 0;
     }
 
     return removed;

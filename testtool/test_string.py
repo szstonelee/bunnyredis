@@ -98,11 +98,11 @@ def test_bitop(times):
         ops = ("AND", "OR", "XOR", "NOT")
         op = ops[index]
         if op != "NOT":
-            res = r.bitop(op, dest_key, *keys)
             res1 = r1.bitop(op, dest_key, *keys)
+            res = r.bitop(op, dest_key, *keys)
         else:
-            res = r.bitop(op, dest_key, keys[0])
             res1 = r1.bitop(op, dest_key, keys[0])
+            res = r.bitop(op, dest_key, keys[0])
         if res != res1:
             print(f"bitop failed, key = {key}, res = {res}, res1 = {res1}")
             return False
@@ -129,16 +129,16 @@ def test_decr(times):
     for _ in range(0, times):
         key = "str_" + str(random.randint(0, key_scope * 2))
         is_ok = False
-        res = None
+        res1 = None
         try:
-            res = r.decr(name=key, amount=1)
+            res1 = r1.decr(name=key, amount=1)
             is_ok = True
         except redis.exceptions.ResponseError as e:
             # because value is not integer as string
             # print(e)
             pass
         if is_ok:
-            res1 = r1.decr(name=key, amount=1)
+            res = r.decr(name=key, amount=1)
             if res != res1:
                 print(f"decr failed, key = {key}, res = {res}, res1 = {res1}")
                 return False
@@ -216,16 +216,16 @@ def test_incr(times):
     for _ in range(0, times):
         key = "str_" + str(random.randint(0, key_scope * 2))
         is_ok = False
-        res = None
+        res1 = None
         try:
-            res = r.incr(name=key, amount=1)
+            res1 = r1.incr(name=key, amount=1)
             is_ok = True
         except redis.exceptions.ResponseError as e:
             # because value is not integer as string
             #print(e)
             pass
         if is_ok:
-            res1 = r1.incr(name=key, amount=1)
+            res= r.incr(name=key, amount=1)
             if res != res1:
                 print(f"incr failed, key = {key}, res = {res}, res1 = {res1}")
                 return False
@@ -237,16 +237,16 @@ def test_incrbyfloat(times):
     for _ in range(0, times):
         key = "str_" + str(random.randint(0, key_scope * 2))
         is_ok = False
-        res = None
+        res1 = None
         try:
-            res = r.incrbyfloat(name=key, amount=2.2)
+            res1 = r1.incrbyfloat(name=key, amount=2.2)
             is_ok = True
         except redis.exceptions.ResponseError as e:
             # because value is not integer as string
             # print(e)
             pass
         if is_ok:
-            res1 = r1.incrbyfloat(name=key, amount=2.2)
+            res = r.incrbyfloat(name=key, amount=2.2)
             if res != res1:
                 print(f"incrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
                 return False
@@ -361,6 +361,7 @@ def test_setbit(times):
 
 
 def _main():
+    flush_all_db()
     call_with_time(inject)
     call_with_time(compare_all)
     call_with_time(test_decr, 100000)

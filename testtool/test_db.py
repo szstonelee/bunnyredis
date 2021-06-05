@@ -1,9 +1,9 @@
 import random
 from test_common import *
 from test_string import inject as inject_string
-from test_string import key_scope as str_key_space
+from test_string import key_scope as str_key_scope
 from test_hash import inject as inject_hash
-from test_hash import key_scope as hash_key_space
+from test_hash import key_scope as hash_key_scope
 
 
 r1.config_set(name="bunnymem", value=50<<20)
@@ -14,9 +14,9 @@ r2.config_set(name="bunnymem", value=1<<30)
 def get_random_key():
     dice = random.randint(0, 4)
     if dice == 0:
-        key = "hash_" + str(random.randint(0, hash_key_space+10))
+        key = "hash_" + str(random.randint(0, hash_key_scope+10))
     else:
-        key = "str_" + str(random.randint(0, str_key_space+1000))
+        key = "str_" + str(random.randint(0, str_key_scope+1000))
     return key
 
 
@@ -105,7 +105,7 @@ def test_randomkey(times):
     for _ in range(0, times):
         key = r1.randomkey()
         if not r.exists(key):
-            print(f"randomkey failed for key {key}, res = {res}, res1 = {res1}")
+            print(f"randomkey failed for key {key}")
             return False
 
     return True
@@ -205,6 +205,7 @@ def test_unlink(times):
 
 
 def _main():
+    flush_all_db()
     inject_string()
     call_with_time(compare_all)
     inject_hash()
