@@ -76,6 +76,7 @@ def test_hget(times):
 
     return True
 
+
 def test_hexists(times):
     for _ in range(0, times):
         key = "hash_" + str(random.randint(0, key_scope * 2))
@@ -279,22 +280,22 @@ def _main():
     flush_all_db()
     call_with_time(inject)
     call_with_time(compare_all)
-    call_with_time(test_hexists, 100_000)
-    call_with_time(test_hgetall, 100_000)
-    call_with_time(test_hincrby, 100_000)
+    call_with_time(test_hexists, 10_000)
+    call_with_time(test_hgetall, 10_000)
+    call_with_time(test_hincrby, 10_000)
     call_with_time(compare_all)
-    call_with_time(test_hget, 100_000)
-    call_with_time(test_hincrbyfloat, 100_000)
+    call_with_time(test_hget, 10_000)
+    call_with_time(test_hincrbyfloat, 10_000)
     call_with_time(compare_all)
     call_with_time(test_hmget, 20_000)
     call_with_time(test_hdel, 100)
     call_with_time(compare_all)
-    call_with_time(test_hsetnx, 100_000)
+    call_with_time(test_hsetnx, 10_000)
     call_with_time(compare_all)
-    call_with_time(test_hvals, 100_000)
-    call_with_time(test_hkeys, 100_000)
-    call_with_time(test_hlen, 100_000)
-    call_with_time(test_hstrlen, 100_000)
+    call_with_time(test_hvals, 10_000)
+    call_with_time(test_hkeys, 10_000)
+    call_with_time(test_hlen, 10_000)
+    call_with_time(test_hstrlen, 10_000)
     call_with_time(compare_all)
 
 

@@ -165,6 +165,8 @@ def _main():
                                 encoding='utf-8',
                                 socket_connect_timeout=2)
     r = redis.StrictRedis(connection_pool=pool)
+    r.config_set(name="bunnymem", value=50<<20)
+    r.config_set(name="bunnydeny", value="no")
 
     # test get
     #test_1000_get(kvs, r)

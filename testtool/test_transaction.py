@@ -61,11 +61,11 @@ def test_multi_exec(times):
         pipe1.move(name=key, db=dbid)
 
         # setbit
-        key = "str_" + str(random.randint(0, str_key_scope * 2))
-        offset = random.randint(1, 100)
-        bit = random.randint(0,1)
-        pipe.setbit(name=key, offset=offset, value=bit)
-        pipe1.setbit(name=key, offset=offset, value=bit)
+        # key = "str_" + str(random.randint(0, str_key_scope * 2))
+        # offset = random.randint(1, 100)
+        # bit = random.randint(0,1)
+        # pipe.setbit(name=key, offset=offset, value=bit)
+        # pipe1.setbit(name=key, offset=offset, value=bit)
 
         res1 = pipe1.execute()
         res = pipe.execute()
@@ -78,10 +78,9 @@ def test_multi_exec(times):
 
 
 def _main():
-    # fake_failed_tran()
     flush_all_db()
-    inject_string()
-    inject_hash()
+    call_with_time(inject_string)
+    call_with_time(inject_hash)
     call_with_time(test_multi_exec, 10_000)
     call_with_time(compare_all)
 

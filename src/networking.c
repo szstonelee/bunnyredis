@@ -198,6 +198,13 @@ client *createClient(connection *conn) {
 
     c->rockKeyNumber = 0;   // rockKeyNumber initialzed
     c->streamWriting = STREAM_WRITE_INIT;   // status is no stream writing
+    if (conn) {
+        // if conn is NULL, it is virtual client or script client
+        serverAssert(server.clientIdTable);
+        uint64_t key = c->id;
+        int res = dictAdd(server.clientIdTable, (void*)key, c);
+        serverAssert(res == DICT_OK);
+    }
 
     return c;
 }
@@ -1089,11 +1096,6 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
         return;
     }
 
-    // NOTE: we can not use the following code in createClient() 
-    // because serverIdTable has not been inited in server.c initServer()
-    serverAssert(dictFind(server.clientIdTable, (const void*)c->id) == NULL);
-    dictReplace(server.clientIdTable, (void *)c->id, c);
-
     /* Last chance to keep flags */
     c->flags |= flags;
 
@@ -1346,7 +1348,8 @@ void freeClient(client *c) {
     //       Slave client could be in server.cliendIdTable but we does not support Cluster and Master/Slave mode.
     //       The following code do not have any "return" statement which guarantees the client will be destroyed
     //       freeClientAsync() may be some issues but right now it is for Debug and LUA which we does not support
-    if (server.clientIdTable) {
+    // if (server.clientIdTable) {
+    if (c->conn) {
         if (c->id == server.streamCurrentClientId) {
             // This condition c->id == server.streamCurrentClientId means we have already finish stream phase
             // which set server.streamCurrentClientId in processNoExecCommandForStreamWrite() or processExecCommandForStreamWrite)
@@ -1355,7 +1358,10 @@ void freeClient(client *c) {
             setVirtualContextFromConcreteClient(c);
         }
         // NOTE: c->id may be not found in server.clientIdTable
-        dictDelete(server.clientIdTable, (const void*)c->id);        
+        // dictDelete(server.clientIdTable, (const void*)c->id);  
+        uint64_t key = c->id;
+        int res = dictDelete(server.clientIdTable, (void*)key);
+        serverAssert(res == DICT_OK);      
     }
 
     /* Log link disconnection with slave */
@@ -2060,7 +2066,6 @@ int processCommandAndResetClient(client *c) {
     if (c->id == server.streamCurrentClientId) {        
         serverAssert(c->streamWriting == STREAM_WRITE_FINISH);
         c->streamWriting = STREAM_WRITE_INIT;    // after the command exectued in the current c, we need reset streamWriting
-        serverAssert(c->id == server.streamCurrentClientId);
         server.streamCurrentClientId = NO_STREAM_CLIENT_ID;   
         // after finished one strem write command, we need goon for the others
         // because the signal maybe has been consumed in async mode
@@ -2165,8 +2170,8 @@ void processInputBuffer(client *c) {
                 if (server.bunny_deny) {
                     if (evict_res == EVICT_ROCK_TIMEOUT || evict_res == EVICT_ROCK_NOT_READY) {
                         serverLog(LL_WARNING, "memory is low because %s. Memory used = %lu, memory limit = %llu, reject cmd = %s", 
-                                (evict_res == EVICT_ROCK_NOT_READY ? "too many keys in RocksDB" : "not quick to free enough memory"),
-                                zmalloc_used_memory(), server.bunnymem, (sds)c->argv[0]->ptr);
+                                  (evict_res == EVICT_ROCK_NOT_READY ? "too many keys in RocksDB" : "not quick to free enough memory"),
+                                  zmalloc_used_memory(), server.bunnymem, (sds)c->argv[0]->ptr);
                         rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
                                             c->argv[0]->ptr);
                         commandProcessed(c);
@@ -2184,54 +2189,31 @@ void processInputBuffer(client *c) {
             int check_stream_res = checkAndSetStreamWriting(c);
             switch (check_stream_res) {
             case STREAM_CHECK_SET_STREAM:
-            case STREAM_CHECK_GO_ON_WITH_ERROR:
+                // When enter stream phase, we can not process input buffer or do any coomand executiong
+                break;
             case STREAM_CHECK_GO_ON_NO_ERROR:
+                serverAssert(c->id != server.streamCurrentClientId);
+                serverAssert(c->rockKeyNumber == 0);
+                if (!(c->flags & CLIENT_MULTI)) {
+                    checkAndSetRockKeyNumber(c, 0);
+                    if (c->rockKeyNumber == 0) {
+                        if (processCommandAndResetClient(c) == C_ERR) return; 
+                } 
+                } else {
+                    if (processCommandAndResetClient(c) == C_ERR) return;
+                }
+                break;
+            case STREAM_CHECK_GO_ON_WITH_ERROR:
             case STREAM_CHECK_EMPTY_TRAN:
+                if (processCommandAndResetClient(c) == C_ERR) return;
                 break;
             case STREAM_CHECK_ACL_FAIL:
             case STREAM_CHECK_FORBIDDEN:
                 commandProcessed(c);
-                continue;
+                break;
             default:
-                serverLog(LL_WARNING, "checkAndSetStreamWriting() return unknow result!");
-                exit(1);
+                serverPanic("checkAndSetStreamWriting() return unknow result!");
             }
-
-            // When enter stream phase, we can not process input buffer or do any coomand executiong
-            if (check_stream_res == STREAM_CHECK_SET_STREAM) break;
-                        
-            // When STREAM_CHECK_ACL_FAIL, it has been processed already
-            if (check_stream_res == STREAM_CHECK_ACL_FAIL) continue;
-
-            if (check_stream_res == STREAM_CHECK_GO_ON_NO_ERROR) {
-                serverAssert(c->id != server.streamCurrentClientId);
-                // NOTE: if in MULTI state, we do not need to check rock key, 
-                // otherwise it can stop anything if some keys are evicted
-                if (!(c->flags & CLIENT_MULTI)) {
-                    checkAndSetRockKeyNumber(c, 0);
-                    // When ener rock phase, we can not process input buffer or do any coomand executiong
-                    if (c->rockKeyNumber > 0) break;
-                }
-            } 
-
-            if (processCommandAndResetClient(c) == C_ERR) return;    
-
-            /*
-            if (check_stream_res == C_OK) {
-                if (c->streamWriting == STREAM_WRITE_WAITING) break;
-
-                int is_stream_write = (c->id == server.streamCurrentClientId);
-                checkAndSetRockKeyNumber(c, is_stream_write);
-                if (c->rockKeyNumber > 0) break;
-            }
-            */
-
-            // if (processCommandAndResetClient(c) == C_ERR) {
-                /* If the client is no longer valid, we avoid exiting this
-                 * loop and trimming the client buffer later. So we return
-                 * ASAP in that case. */
-                // return;
-            // }
         }
     }
 

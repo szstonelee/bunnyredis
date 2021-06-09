@@ -1,4 +1,9 @@
 
+```
+ for i in {1..1000}; do sleep 1; redis-cli& sleep 1; pkill -9 redis-cli;  done
+ for i in {1..1000}; do sleep 0.2; redis-cli& sleep 0.5; pkill -9 redis-cli;  done
+```
+
 测试注意：
 ```
 r-server --port 8888 --bind 0.0.0.0 --save "" --appendonly no

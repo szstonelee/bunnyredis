@@ -16,6 +16,9 @@
 // API from t_string.c
 int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type, int from_strem_check);
 
+// API from networking.c
+void commandProcessed(client *c);
+
 // API
 void initStreamPipeAndStartConsumer();
 void execVirtualCommand();

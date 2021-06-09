@@ -206,9 +206,8 @@ def test_unlink(times):
 
 def _main():
     flush_all_db()
-    inject_string()
-    call_with_time(compare_all)
-    inject_hash()
+    call_with_time(inject_string)
+    call_with_time(inject_hash)
     call_with_time(compare_all)
     call_with_time(test_move, 100)
     call_with_time(compare_all)
