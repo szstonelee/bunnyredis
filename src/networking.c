@@ -1039,6 +1039,18 @@ void clientAcceptHandler(connection *conn) {
         }
     }
 
+    int consume_startup;
+    atomicGet(kafkaStartupConsumeFinish, consume_startup);
+    if (consume_startup != CONSUMER_STARTUP_OPEN_TO_CLIENTS) {
+        char *err = "-BunnyServer is resuming the log in Kafka right now. When finished, it is open to clients. Please retry later.\r\n";
+        if (connWrite(c->conn,err,strlen(err)) == -1) {
+            /* Nothing to do, Just to avoid the warning... */
+        }
+        server.stat_rejected_conn++;
+        freeClientAsync(c);
+        return;
+    }
+
     server.stat_numconnections++;
     moduleFireServerEvent(REDISMODULE_EVENT_CLIENT_CHANGE,
                           REDISMODULE_SUBEVENT_CLIENT_CHANGE_CONNECTED,

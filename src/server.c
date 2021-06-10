@@ -2188,10 +2188,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int consumer_startup;
     atomicGet(kafkaStartupConsumeFinish, consumer_startup);
     if (consumer_startup == CONSUMER_STARTUP_FINISH) {
-        unpauseClients();
         // kafkaStartupConsumeFinish = CONSUMER_STARTUP_UNPAUSE;
-        atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_UNPAUSE);
-        serverLog(LL_NOTICE, "consumer thread finished startup job and enable all clients to work.");
+        atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_OPEN_TO_CLIENTS);
+        serverLog(LL_NOTICE, "consumer thread finished resuming enough log from Kafka and BunnyRedis now is open to all clients.");
     }
 
     /* Software watchdog: deliver the SIGALRM that will reach the signal

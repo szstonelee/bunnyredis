@@ -679,8 +679,12 @@ static void readFromWriteQueueFirstInReadThread(const size_t task_cnt, sds const
         listRewind(write_queue, &li);
         // We assume the write_queue is short enough
         write_queue_len = listLength(write_queue);
-        if (write_queue_len > ROCK_WRITE_QUEUE_TOO_LONG)
-            serverLog(LL_WARNING, "write queue of Rock is too long, len = %lu", write_queue_len);
+        if (write_queue_len > ROCK_WRITE_QUEUE_TOO_LONG) {
+            int consume_startup;
+            atomicGet(kafkaStartupConsumeFinish, consume_startup);
+            if (consume_startup == CONSUMER_STARTUP_OPEN_TO_CLIENTS)
+                serverLog(LL_WARNING, "write queue of Rock is too long, len = %lu", write_queue_len);
+        }
         while ((ln = listNext(&li))) {
             write_task = listNodeValue(ln);
             write_rock_key = write_task->rock_key;

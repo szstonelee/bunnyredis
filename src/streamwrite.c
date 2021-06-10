@@ -704,6 +704,19 @@ void execVirtualCommand() {
     freeVirtualClientContext();     // the matched clearing-up for setVirtualClientContext()
 }
 
+/* consumer and producer both call check_exec_msg() */
+static int check_exec_msg(sds msg) {
+    size_t offset = sizeof(uint8_t) + sizeof(uint64_t) + 
+                    sizeof(uint8_t) + sizeof(uint8_t);
+    
+    if (sdslen(msg) < offset + 4)
+        return 0;
+
+    size_t cmd_len = msg[offset-1];
+    return cmd_len == 4 && msg[offset] == 'e' && 
+           msg[offset+1] == 'x' && msg[offset+2] == 'e' && msg[offset+3] == 'c';
+}
+
 /*                                 */
 /*                                 */
 /* The following is about producer */
@@ -769,14 +782,86 @@ static sds pickSndMsgInProducerThread() {
     return msg;
 }
 
+/* for set redis command, no nx or xx, check https://redis.io/commands/set */
+static sds cal_kafka_key_for_set(list *args) {
+    serverAssert(listLength(args) >= 2);
+    sds key = NULL;
+    int exist_nx_or_xx = 0;
+    listIter li;
+    listNode *ln;
+    listRewind(args, &li);
+    int index = 0;
+
+    while ((ln = listNext(&li))) {
+        sds arg = listNodeValue(ln);
+        if (index == 0) {
+            key = arg;
+        } else if (index > 1) {
+            if (strcasecmp(arg, "nx") == 0) {
+                exist_nx_or_xx = 1;
+                break;
+            } else if (strcasecmp(arg, "xx") == 0) {
+                exist_nx_or_xx = 1;
+                break;
+            }
+        }
+        ++index;
+    }
+
+    if (!exist_nx_or_xx) {
+        serverAssert(key);
+        uint8_t kafka_key_id_for_set = 0;
+        sds kafka_key = sdsnewlen(&kafka_key_id_for_set, sizeof(kafka_key_id_for_set));
+        kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+        return kafka_key;
+    } else {
+        return NULL;
+    }
+}
+
+
+static sds cal_kafka_key_in_producer_thread(sds msg) {
+    int is_exec_msg = check_exec_msg(msg);
+    
+    if (is_exec_msg) {
+        return NULL;   // for transaction, no kafka key
+    } else {    
+        uint8_t node_id;
+        uint64_t client_id;
+        uint8_t dbid;
+        sds command = NULL;
+        list *no_exec_args = NULL;
+
+        int parse_ret = parse_msg_for_no_exec(msg, &node_id, &client_id, &dbid, &command, &no_exec_args);
+        serverAssert(parse_ret == C_OK);
+        serverAssert(command);
+
+        sds kafka_key = NULL;
+        if (strcasecmp(command, "set") == 0) {
+            kafka_key = cal_kafka_key_for_set(no_exec_args);
+        }
+
+        // recycle the resource allocated by parse_msg_for_no_exec()
+        sdsfree(command);
+        if (no_exec_args) {
+            listSetFreeMethod(no_exec_args, freeArgAsSdsString);
+            listRelease(no_exec_args);
+        }
+
+        return kafka_key;
+    }
+}
+
 /* reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
     serverAssert(msg);
 
+    sds kafka_key = cal_kafka_key_in_producer_thread(msg);
     int errno;
     while (1) {
         // NOTE: msg_opaque parameter needs to be msg to reclame the memory in db_msg_cb()
-        errno = rd_kafka_produce(rkt, 0, 0, msg, sdslen(msg), NULL, 0, msg);    
+        errno = rd_kafka_produce(rkt, 0, 0, msg, sdslen(msg), 
+                                 kafka_key, (kafka_key ? sdslen(kafka_key) : 0), msg);    
 
         switch (errno) {
         case 0:
@@ -793,19 +878,20 @@ static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic
         }
     }
 
+    sdsfree(kafka_key);
+
     serverPanic( "sendKafkaMsgInProducerThread() can not reach here!");
 }
 
 /* We use rd_kafka_metadata() to check the topic valid in Kafka 
  * Most rdkafka API are local only, we need a API for test Kafka liveness 
  * if no error, return C_OK. otherwise, return C_ERR */
+#define CLEANUP_POLICY_MAX_SIZE 16
 static int checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
     const struct rd_kafka_metadata *data;
-    rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 1, rkt, &data, 10000);  // 10 seconds
+    rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 0, rkt, &data, 5000);  // 5 seconds
     if (err == RD_KAFKA_RESP_ERR_NO_ERROR) {
         rd_kafka_metadata_destroy(data);
-        lockProducerData();
-        unlockProducerData();
         return C_OK;
     } else {
         serverLog(LL_WARNING, "checkKafkaInProduerThread() failed for reason = %s", rd_kafka_err2str(err));
@@ -1042,19 +1128,6 @@ static client* processExecCommandForStreamWrite(uint8_t node_id, uint64_t client
     return c;
 }
 
-static int check_exec_msg(sds msg) {
-    size_t offset = sizeof(uint8_t) + sizeof(uint64_t) + 
-                    sizeof(uint8_t) + sizeof(uint8_t);
-    
-    if (sdslen(msg) < offset + 4)
-        return 0;
-
-    size_t cmd_len = msg[offset-1];
-    return cmd_len == 4 && msg[offset] == 'e' && 
-           msg[offset+1] == 'x' && msg[offset+2] == 'e' && msg[offset+3] == 'c';
-}
-
-
 /* When the concrete client finished a stream write command in network.c processCommandAndResetClient()
  * or the virtual client finished a stream write command in execVirtualCommand(),
  * or just the main thread got a message from stream write in streamConsumerSignalHandler()
@@ -1160,9 +1233,13 @@ static void addRcvMsgInConsumerThread(size_t len, void *payload) {
 
     sds copy = sdsnewlen(payload, len);
     listAddNodeTail(rcvMsgs, copy);
-    if (listLength(rcvMsgs) >= RCV_MSGS_TOO_LONG)
-        serverLog(LL_WARNING, "addRcvMsgInConsumerThread() rcvMsgs too long, list length = %ld", 
-                  listLength(rcvMsgs));
+    if (listLength(rcvMsgs) >= RCV_MSGS_TOO_LONG) {
+        int consume_startup;
+        atomicGet(kafkaStartupConsumeFinish, consume_startup);
+        if (consume_startup == CONSUMER_STARTUP_OPEN_TO_CLIENTS)
+            serverLog(LL_WARNING, "addRcvMsgInConsumerThread() rcvMsgs too long, list length = %ld", 
+                      listLength(rcvMsgs));
+    }
         
     unlockConsumerData();
 }
@@ -1196,6 +1273,9 @@ static void* entryInConsumerThread(void *arg) {
     // we can not retrieve message which is out of range
     if (rd_kafka_conf_set(conf, "auto.offset.reset", "error", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() auto.offset.reset, reason = %s", errstr);
+    if (rd_kafka_conf_set(conf, "enable.auto.commit", "true", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() enable.auto.commit, reason = %s", errstr);
+    
     rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
     if (!rk)
         serverPanic("initKafkaConsumer failed for rd_kafka_new()");
@@ -1229,18 +1309,25 @@ static void* entryInConsumerThread(void *arg) {
     
     rd_kafka_topic_partition_list_destroy(subscription);
 
+    static int no_message_cnt = 0;
+    long long startup_cnt = 0;
     while(1) {
         rd_kafka_message_t *rkm = rd_kafka_consumer_poll(rk, 100);
 
         if (!rkm) {
             // check whether the startup work of consumer is finished
-            int consumer_startup;
-            atomicGet(kafkaStartupConsumeFinish, consumer_startup);
-            if (consumer_startup == CONSUMER_STARTUP_START) {
-                // signal to serverCron()
-                atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
-                // kafkaStartupConsumeFinish = CONSUMER_STARTUP_FINISH;
+            if (no_message_cnt == 10) {
+                // at least 10 times timeout (1 second) no log is coming because only one time poll() may be not correct
+                // when read from kafka at startup, there is some chance to timeout at the beginning
+                int consumer_startup;
+                atomicGet(kafkaStartupConsumeFinish, consumer_startup);
+                if (consumer_startup == CONSUMER_STARTUP_START) {
+                    // signal to serverCron()
+                    atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
+                    // kafkaStartupConsumeFinish = CONSUMER_STARTUP_FINISH;
+                }
             }
+            ++no_message_cnt;
             continue;     // timeout with no message 
         }
 
@@ -1262,6 +1349,15 @@ static void* entryInConsumerThread(void *arg) {
         signalMainThreadByPipeInConsumerThread();   
     
         rd_kafka_message_destroy(rkm);
+
+        // log some info for startup (if resuming msg are too long)
+        startup_cnt++;
+        int consumer_startup;
+        atomicGet(kafkaStartupConsumeFinish, consumer_startup);
+        if (consumer_startup == CONSUMER_STARTUP_START) {
+            if (startup_cnt % 50000 == 0)
+                serverLog(LL_NOTICE, "consume thread is resuming Kafka log, now cnt = %lld", startup_cnt);
+        }
     }
 
     return NULL;
@@ -1274,8 +1370,6 @@ static void* entryInConsumerThread(void *arg) {
 void initStreamPipeAndStartConsumer() {
     // first, we need to pause all clients for consumer thread to do some startup works
     atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_START);
-    mstime_t pause_end_time = mstime() + 1000*60*60*24;     // 24 hours
-    pauseClients(pause_end_time, CLIENT_PAUSE_ALL);
 
     sds_exec = sdsnewlen("exec", 4);        // init gloabl constant string for command "exec"
 

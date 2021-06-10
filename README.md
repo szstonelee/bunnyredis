@@ -1,4 +1,17 @@
 
+set retention and cleanup policy
+```
+bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config retention.ms=-1
+bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config retention.bytes=10485760
+bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config cleanup.policy=compact
+
+
+NOTE: retention.check.interval.ms and log.cleaner.enable log.segment.bytes are from file config/server.properties
+
+bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --topic redisStreamWrite --describe
+```
+1M = 1048576
+
 ```
  for i in {1..1000}; do sleep 1; redis-cli& sleep 1; pkill -9 redis-cli;  done
  for i in {1..1000}; do sleep 0.2; redis-cli& sleep 0.5; pkill -9 redis-cli;  done
@@ -44,7 +57,7 @@ tool
 # List offsets:
 bin/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --time -1 --topic redisStreamWrite
 # delete a topic then recreate it
-bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite; \
+bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite
 bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic redisStreamWrite
 # start kafka
 export JMX_PORT=9998
