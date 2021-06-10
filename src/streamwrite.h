@@ -13,6 +13,10 @@
 #define STREAM_CHECK_EMPTY_TRAN           5     // transaction is empty executution
 #define STREAM_CHECK_FORBIDDEN            6     // forbidden by BunnyRedis
 
+#define CONSUMER_STARTUP_START    0
+#define CONSUMER_STARTUP_FINISH   1
+#define CONSUMER_STARTUP_UNPAUSE  2
+
 // API from t_string.c
 int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type, int from_strem_check);
 
@@ -26,5 +30,9 @@ int checkAndSetStreamWriting(client *c);
 void initKafkaProducer();
 void setVirtualContextFromConcreteClient(client *concrete);
 void try_to_execute_stream_commands();
+
+void lockConsumerData();
+void unlockConsumerData();
+extern redisAtomic int kafkaStartupConsumeFinish;
 
 #endif

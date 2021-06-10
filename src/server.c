@@ -2184,6 +2184,16 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(id);
     UNUSED(clientData);
 
+    /* We check whether the startup of consumer is finished */
+    int consumer_startup;
+    atomicGet(kafkaStartupConsumeFinish, consumer_startup);
+    if (consumer_startup == CONSUMER_STARTUP_FINISH) {
+        unpauseClients();
+        // kafkaStartupConsumeFinish = CONSUMER_STARTUP_UNPAUSE;
+        atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_UNPAUSE);
+        serverLog(LL_NOTICE, "consumer thread finished startup job and enable all clients to work.");
+    }
+
     /* Software watchdog: deliver the SIGALRM that will reach the signal
      * handler if we don't return here fast enough. */
     if (server.watchdog_period) watchdogScheduleSignal(server.watchdog_period);

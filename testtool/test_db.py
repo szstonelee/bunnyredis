@@ -7,6 +7,7 @@ from test_hash import key_scope as hash_key_scope
 
 
 r1.config_set(name="bunnymem", value=50<<20)
+r1.config_set(name="lazyfree-lazy-server-del", value="yes")
 r1.config_set(name="bunnydeny", value="no")
 r2.config_set(name="bunnymem", value=1<<30)
 

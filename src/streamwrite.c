@@ -21,6 +21,7 @@ static pthread_spinlock_t producerLock;
 #define RCV_MSGS_TOO_LONG   1000    // if we recevice to much messages and not quick to consume, it just warns
 
 static int kafkaReadyAndTopicCorrect = 0;   // producer start for check kafka state and main thread check it for correctness
+redisAtomic int kafkaStartupConsumeFinish;   // when startup, finish all consume data, then unpause all clients to start working
 static const char *bootstrapBrokers = "127.0.0.1:9092,";
 static const char *bunnyRedisTopic = "redisStreamWrite"; 
 
@@ -29,12 +30,12 @@ static list* rcvMsgs;  // consumer and main thread contented data
 
 static sds sds_exec;    // global variable which is "exec" string
 
-static void lockConsumerData() {
+void lockConsumerData() {
     int res = pthread_spin_lock(&consumerLock);
     serverAssert(res == 0);
 }
 
-static void unlockConsumerData() {
+void unlockConsumerData() {
     int res = pthread_spin_unlock(&consumerLock);
     serverAssert(res == 0);
 }
@@ -796,17 +797,19 @@ static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic
 }
 
 /* We use rd_kafka_metadata() to check the topic valid in Kafka 
- * Most rdkafka API are local only, we need a API for test Kafka liveness */
-void checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
+ * Most rdkafka API are local only, we need a API for test Kafka liveness 
+ * if no error, return C_OK. otherwise, return C_ERR */
+static int checkKafkaInProduerThread(rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
     const struct rd_kafka_metadata *data;
-    rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 1, rkt, &data, 50000);  // 5 seconds
+    rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 1, rkt, &data, 10000);  // 10 seconds
     if (err == RD_KAFKA_RESP_ERR_NO_ERROR) {
         rd_kafka_metadata_destroy(data);
         lockProducerData();
-        kafkaReadyAndTopicCorrect = 1;
         unlockProducerData();
+        return C_OK;
     } else {
         serverLog(LL_WARNING, "checkKafkaInProduerThread() failed for reason = %s", rd_kafka_err2str(err));
+        return C_ERR;
     }
 }
 
@@ -835,7 +838,7 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "enable.idempotence", "true",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() enable.idempotence, reason = %s", errstr);
-    // set broker message size (to 100 M)
+    // set broker message size (to 100_000_000)
     if (rd_kafka_conf_set(conf, "message.max.bytes", "100000000",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.max.bytes, reason = %s", errstr);
@@ -851,7 +854,12 @@ static void* entryInProducerThread(void *arg) {
     if (!rkt)
         serverPanic("initKafkaProducer failed for rd_kafka_topic_new(), errno = %d,", errno);
 
-    checkKafkaInProduerThread(rk, rkt); // for waiting mainthread
+    if (checkKafkaInProduerThread(rk, rkt) != C_OK) {
+        serverLog(LL_WARNING, "producer thread can not connect to Kafka, so terminate the thread!");
+        return NULL;    // terminate the producer thread if can not connect to Kafka
+    } else {
+        kafkaReadyAndTopicCorrect = 1;  // main thread check the value here
+    }
 
     sndMsgs = listCreate();
     uint sleepMicro = START_SLEEP_MICRO;      
@@ -895,10 +903,11 @@ void initKafkaProducer() {
             break;
         }
         unlockProducerData();
-        usleep(1000*1000);
+        usleep(1001*1000);
         ++seconds;
-        serverLog(LL_NOTICE, "Main thread waiting for Kafka producer thread reporting kafka state ...");
+        serverLog(LL_NOTICE, "Main thread waiting for producer thread reporting kafka state ...");
     }
+
     lockProducerData();
     if (kafkaReadyAndTopicCorrect != 1) {
         serverLog(LL_WARNING, "Main thread check kafka state result failed for %d seconds!", seconds);
@@ -906,6 +915,8 @@ void initKafkaProducer() {
         exit(1);
     } 
     unlockProducerData();
+
+    // init Kafka producer thread succesfully. We can go on.
 }    
 
 /*                                 */
@@ -1193,17 +1204,45 @@ static void* entryInConsumerThread(void *arg) {
  
     subscription = rd_kafka_topic_partition_list_new(1);
     zeroPartion = rd_kafka_topic_partition_list_add(subscription, bunnyRedisTopic, 0);
-    zeroPartion->offset = START_OFFSET;
+    // zeroPartion->offset = START_OFFSET;
+    zeroPartion->offset = RD_KAFKA_OFFSET_BEGINNING;
     /* Subscribe to the list of topics, NOTE: only one in the list of topics */
     err = rd_kafka_assign(rk, subscription);
     if (err) 
         serverPanic("initKafkaConsumer failed for rd_kafka_subscribe() reason = %s", rd_kafka_err2str(err));
+    
+    // seek the start of offset
+    rd_kafka_error_t *seek_err;
+    seek_err = rd_kafka_seek_partitions(rk, subscription, 2000);
+    if (seek_err) {
+        serverLog(LL_WARNING, "rd_kafka_seek_partitions() failed! reason = %s", rd_kafka_err2str(rd_kafka_error_code(seek_err)));
+        exit(1);
+    }
+    rd_kafka_topic_partition_t start_info = subscription->elems[0];
+    serverAssert(subscription->cnt == 1);
+    if (start_info.err) {
+        serverLog(LL_WARNING, "error = %s", rd_kafka_err2str(start_info.err));
+        exit(1);
+    } 
+    int64_t start_offset = start_info.offset;
+    serverLog(LL_WARNING, "start offset = %lu", start_offset);
+    
     rd_kafka_topic_partition_list_destroy(subscription);
 
     while(1) {
         rd_kafka_message_t *rkm = rd_kafka_consumer_poll(rk, 100);
 
-        if (!rkm) continue;     // timeout with no message 
+        if (!rkm) {
+            // check whether the startup work of consumer is finished
+            int consumer_startup;
+            atomicGet(kafkaStartupConsumeFinish, consumer_startup);
+            if (consumer_startup == CONSUMER_STARTUP_START) {
+                // signal to serverCron()
+                atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
+                // kafkaStartupConsumeFinish = CONSUMER_STARTUP_FINISH;
+            }
+            continue;     // timeout with no message 
+        }
 
         if (rkm->err) {
             if (rkm->err == RD_KAFKA_RESP_ERR__AUTO_OFFSET_RESET) {
@@ -1233,6 +1272,11 @@ static void* entryInConsumerThread(void *arg) {
  * it will write it to buffer (sync by spin lock) then notify main thread by pipe 
  * because main thread maybe sleep in eventloop for events comming */
 void initStreamPipeAndStartConsumer() {
+    // first, we need to pause all clients for consumer thread to do some startup works
+    atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_START);
+    mstime_t pause_end_time = mstime() + 1000*60*60*24;     // 24 hours
+    pauseClients(pause_end_time, CLIENT_PAUSE_ALL);
+
     sds_exec = sdsnewlen("exec", 4);        // init gloabl constant string for command "exec"
 
     pthread_t consumer_thread;
