@@ -1311,13 +1311,15 @@ static void* entryInConsumerThread(void *arg) {
 
     static int no_message_cnt = 0;
     long long startup_cnt = 0;
+    monotime startupCheckTimer = 0;   
+
     while(1) {
         rd_kafka_message_t *rkm = rd_kafka_consumer_poll(rk, 100);
 
         if (!rkm) {
             // check whether the startup work of consumer is finished
             if (no_message_cnt == 10) {
-                // at least 10 times timeout (1 second) no log is coming because only one time poll() may be not correct
+                // at least 20 times timeout (1 second) no log is coming because only one time poll() may be not correct
                 // when read from kafka at startup, there is some chance to timeout at the beginning
                 int consumer_startup;
                 atomicGet(kafkaStartupConsumeFinish, consumer_startup);
@@ -1351,12 +1353,22 @@ static void* entryInConsumerThread(void *arg) {
         rd_kafka_message_destroy(rkm);
 
         // log some info for startup (if resuming msg are too long)
+        if (startup_cnt == 0) elapsedStart(&startupCheckTimer);
         startup_cnt++;
         int consumer_startup;
         atomicGet(kafkaStartupConsumeFinish, consumer_startup);
         if (consumer_startup == CONSUMER_STARTUP_START) {
-            if (startup_cnt % 50000 == 0)
-                serverLog(LL_NOTICE, "consume thread is resuming Kafka log, now cnt = %lld", startup_cnt);
+            if (startup_cnt % 10000 == 0) {
+                serverLog(LL_NOTICE, "consumer thread is resuming Kafka log, now count = %lld", startup_cnt);
+                if (elapsedMs(startupCheckTimer) > 3000) {
+                    // if it take too long (1 seconds) to process the 10000 msgs
+                    // it means the consumer is caught-up
+                    atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
+                    serverLog(LL_NOTICE, "consumer thread believes it can catch up with Kafka.");
+                } else {
+                    elapsedStart(&startupCheckTimer); // 
+                }
+            }
         }
     }
 
