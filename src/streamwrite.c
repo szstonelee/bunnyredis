@@ -294,6 +294,147 @@ static int parse_msg_for_exec(sds msg, uint8_t *node_id, uint64_t *client_id, ui
     } 
 }
 
+static int check_nx_xx_for_set_comomand(client *c) {
+    serverAssert(server.kafka_compcation);
+    serverAssert(strcasecmp(c->argv[0]->ptr, "set") == 0);
+
+    for (int i = 3; i < c->argc; ++i) {
+        sds arg = c->argv[i]->ptr;
+        if (strcasecmp(arg, "nx") == 0) {
+            return 1;
+        } else if (strcasecmp(arg, "xx") == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int is_forbidden_cmd_in_compation(char *cmd) {
+    serverAssert(server.kafka_compcation);
+    if (strcasecmp(cmd, "msetnx") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "setnx") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "append") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "decr") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "decrby") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "incr") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "incrby") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "incrbyfloat") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "setbit") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "setrange") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "geoadd") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "pfadd") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "pfmerge") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "hincrby") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "hincrbyfloat") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "hsetnx") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "sadd") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "sdiffstore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "sinter") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "sinterstore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "smove") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "spop") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "srem") == 0) {
+        return 1;        
+    } else if (strcasecmp(cmd, "sunion") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "sunionstore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "copy") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "move") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "rename") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "renamenx") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "lpushhx") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "lpushhx") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "lrem") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "lset") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "ltrim") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "lpop") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "rpop") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "rpoplpush") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "lmove") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "rpushhx") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zadd") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zdiffstore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zincrby") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zinterstore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zpopmax") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zpopmin") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zrangestore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zrem") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zremrangebylex") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zremrangebyrank") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zremrangebyscore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zunion") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "zunionstore") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "xadd") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "xtrim") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "xdel") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "xgroup") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "xack") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "xclaim") == 0) {
+        return 1;
+    } else if (strcasecmp(cmd, "xautoclaim") == 0) {
+        return 1;
+    } else {
+        return 0;
+    }
+
+}
+
 /* What is a virtual client ? 
  * please reference scripting.c
  * We create a virtual client which will execute a command in the virtual client context
@@ -328,13 +469,18 @@ int checkAndSetStreamWriting(client *c) {
         return STREAM_CHECK_FORBIDDEN;
     }
 
+    // command basic parameters number is not OK
+    if ((cmd->arity > 0 && cmd->arity != c->argc) ||
+        (c->argc < -cmd->arity)) 
+        return STREAM_CHECK_GO_ON_WITH_ERROR;
+
     // check set command has expire argument
     if (strcasecmp(c->argv[0]->ptr, "set") == 0) {
         robj *expire = NULL;
         int unit = UNIT_SECONDS;
         int flags = OBJ_NO_FLAGS;
 
-        int parse_ret = parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_SET, 1);
+        int parse_ret =  parseExtendedStringArgumentsWithoutReply(c,&flags,&unit,&expire,COMMAND_SET);
         
         if (parse_ret != C_OK) 
             return STREAM_CHECK_GO_ON_WITH_ERROR;        
@@ -343,12 +489,23 @@ int checkAndSetStreamWriting(client *c) {
             rejectCommandFormat(c,"BunnyRedis forbids '%s' command partially because the expire arguments", c->argv[0]->ptr);
             return STREAM_CHECK_FORBIDDEN;
         }
+
+        // for set we can not use "nx" or "xx" arg with set
+        if (server.kafka_compcation) {
+            if (check_nx_xx_for_set_comomand(c)) {
+                rejectCommandFormat(c,"BunnyRedis forbids '%s' command with nx or xx argument because kafka compaction enabled", c->argv[0]->ptr);
+                return STREAM_CHECK_FORBIDDEN;
+            }
+        }
     }
 
-    // command basic parameters number is not OK
-    if ((cmd->arity > 0 && cmd->arity != c->argc) ||
-        (c->argc < -cmd->arity)) 
-        return STREAM_CHECK_GO_ON_WITH_ERROR;
+    // check whether support kafka compaction, if enable compaction, some commands are forbidden
+    if (server.kafka_compcation) {
+        if (is_forbidden_cmd_in_compation(c->argv[0]->ptr)) {
+            rejectCommandFormat(c,"BunnyRedis forbids '%s' command because kafka compaction enabled", c->argv[0]->ptr);
+            return STREAM_CHECK_FORBIDDEN;
+        }
+    }
  
     // NOTE: we can not directly use processCommand() code 
     // because c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr); in processCommand()
@@ -420,6 +577,7 @@ int checkAndSetStreamWriting(client *c) {
     if ((c->flags & CLIENT_MULTI)) {
         // For transaction, we need special check. Even the command belongs to STREAM_ENABLED_CMD,
         // in transaction context, it could be queued to avoid setting STREAM_WRITE_WAITING
+        // in transaction mode, we need to check queued command for kafka compaction
         if (cmd->proc != execCommand) {
             return STREAM_CHECK_GO_ON_NO_ERROR;       // command could be queued
         } else { 
@@ -782,8 +940,27 @@ static sds pickSndMsgInProducerThread() {
     return msg;
 }
 
-/* for set redis command, no nx or xx, check https://redis.io/commands/set */
-static sds cal_kafka_key_for_set(list *args) {
+#define KAFKA_COMPACT_PK                255
+#define KAFKA_COMPACT_SET_COMMAND       0
+#define KAFKA_COMPACT_GETSET_COMMAND    1
+#define KAFKA_COMPACT_GETDEL_COMMAND    2
+#define KAFKA_COMPACT_HSET_COMMAND      3
+#define KAFKA_COMPACT_HMSET_COMMAND     4
+#define KAFKA_COMPACT_HDEL_COMMAND      5
+#define KAFKA_COMPACT_DEL_COMMAND       6
+#define KAFKA_COMPACT_UNLINK_COMMAND    7
+
+/* for set redis command, no nx or xx, check https://redis.io/commands/set 
+ * NOTE: it needs guarantee that: the set comannd with args will be executed successfully, i.e., no error.
+ *       otherwise, it will break the integrity of data when compaction in Kafka. 
+ *       How we guarantee that? Three mehods:
+ *       1. in checkAndSetStreamWriting(), we exclude TTL
+ *       2. right here, we execlude nx and xx
+ *       3. in checkAndSetStreamWriting() we copy a lot of code in processCommand() 
+ *          which check a lot of error before stream write */
+static sds cal_kafka_key_for_set(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+
     serverAssert(listLength(args) >= 2);
     sds key = NULL;
     int exist_nx_or_xx = 0;
@@ -808,10 +985,14 @@ static sds cal_kafka_key_for_set(list *args) {
         ++index;
     }
 
+    // NOTE: checkAndSetStreamWriting() already forbid nx or xxs
+    serverAssert(!exist_nx_or_xx);      
+
     if (!exist_nx_or_xx) {
         serverAssert(key);
-        uint8_t kafka_key_id_for_set = 0;
-        sds kafka_key = sdsnewlen(&kafka_key_id_for_set, sizeof(kafka_key_id_for_set));
+        sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+        uint8_t kafka_cmd_id = KAFKA_COMPACT_SET_COMMAND;
+        kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
         kafka_key = sdscatlen(kafka_key, key, sdslen(key));
         return kafka_key;
     } else {
@@ -819,8 +1000,189 @@ static sds cal_kafka_key_for_set(list *args) {
     }
 }
 
+static sds cal_kafka_key_for_getset(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+    serverAssert(listLength(args) == 2);
+
+    sds key = listNodeValue(listIndex(args, 0));
+
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_GETSET_COMMAND;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+    kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+
+    return kafka_key;
+}
+
+static sds cal_kafka_key_for_getdel(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+    serverAssert(listLength(args) == 1);
+
+    sds key = listNodeValue(listIndex(args, 0));
+
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_GETDEL_COMMAND;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+    kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+
+    return kafka_key;
+}
+
+#define SPECIAL_CHAR_CAN_NOT_IN_STRING  254     // reference https://kb.iu.edu/d/aepu
+static int has_special_char_in_key_or_field(sds check) {
+    for (size_t i = 0; i < sdslen(check); ++i) {
+        unsigned char c = check[i];
+        if (c == SPECIAL_CHAR_CAN_NOT_IN_STRING)
+            return 1;
+    }
+    return 0;
+}
+
+/* hset: Two conditions for hset command to kafka key.
+ *       1. we only support one field 
+ *       2. key and field can not have special charactor in the view of latin_1 encoding */
+static sds cal_kafka_key_for_hset(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+
+    size_t len = listLength(args);
+    serverAssert(len % 2 == 1 && len >= 3);
+    
+    if (len != 3) 
+        return NULL;    // only support one key with one field 
+
+    sds key = listNodeValue(listIndex(args, 0));
+    sds field = listNodeValue(listIndex(args, 1));
+
+    if (has_special_char_in_key_or_field(key) || has_special_char_in_key_or_field(field))
+        return NULL;
+
+    // we can encode for kafka key
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_HSET_COMMAND;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+    kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+    uint8_t special_char = SPECIAL_CHAR_CAN_NOT_IN_STRING;
+    kafka_key = sdscatlen(kafka_key, &special_char, sizeof(special_char));
+    kafka_key = sdscatlen(kafka_key, field, sdslen(field));
+    
+    return kafka_key;
+}
+
+static sds cal_kafka_key_for_hmset(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+
+    size_t len = listLength(args);
+    serverAssert(len % 2 == 1 && len >= 3);
+    
+    if (len != 3) 
+        return NULL;    // only support one key with one field 
+
+    sds key = listNodeValue(listIndex(args, 0));
+    sds field = listNodeValue(listIndex(args, 1));
+
+    if (has_special_char_in_key_or_field(key) || has_special_char_in_key_or_field(field))
+        return NULL;
+
+    // we can encode for kafka key
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_HMSET_COMMAND;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+    kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+    uint8_t special_char = SPECIAL_CHAR_CAN_NOT_IN_STRING;
+    kafka_key = sdscatlen(kafka_key, &special_char, sizeof(special_char));
+    kafka_key = sdscatlen(kafka_key, field, sdslen(field));
+    
+    return kafka_key;
+}
+
+static sds cal_kafka_key_for_hdel(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+
+    size_t len = listLength(args);
+    serverAssert(len >= 2);
+    
+    if (len != 2) 
+        return NULL;    // only support one key with one field 
+
+    sds key = listNodeValue(listIndex(args, 0));
+    sds field = listNodeValue(listIndex(args, 1));
+
+    if (has_special_char_in_key_or_field(key) || has_special_char_in_key_or_field(field))
+        return NULL;
+
+    // we can encode for kafka key
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_HDEL_COMMAND;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+    kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+    uint8_t special_char = SPECIAL_CHAR_CAN_NOT_IN_STRING;
+    kafka_key = sdscatlen(kafka_key, &special_char, sizeof(special_char));
+    kafka_key = sdscatlen(kafka_key, field, sdslen(field));
+    
+    return kafka_key;
+}
+
+static sds cal_kafka_key_for_del(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+
+    size_t len = listLength(args);
+    serverAssert(len >= 1);
+    
+    if (len != 1) 
+        return NULL;    // only support one key 
+
+    sds key = listNodeValue(listIndex(args, 0));
+
+    // we can encode for kafka key
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_DEL_COMMAND;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+    kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+    
+    return kafka_key;
+}
+
+static sds cal_kafka_key_for_unlink(uint8_t dbid, list *args) {
+    serverAssert(server.kafka_compcation);
+
+    size_t len = listLength(args);
+    serverAssert(len >= 1);
+    
+    if (len != 1) 
+        return NULL;    // only support one key 
+
+    sds key = listNodeValue(listIndex(args, 0));
+
+    // we can encode for kafka key
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_UNLINK_COMMAND;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+    kafka_key = sdscatlen(kafka_key, key, sdslen(key));
+    
+    return kafka_key;
+}
+
+/* when kafka run in compaction for topic, it needs PK, primary key */
+static sds cal_kafka_key_for_pk() {
+    serverAssert(server.kafka_compcation);
+
+    uint8_t dbid = 255;
+    sds kafka_key = sdsnewlen(&dbid, sizeof(dbid));
+    uint8_t kafka_cmd_id = KAFKA_COMPACT_PK;
+    kafka_key = sdscatlen(kafka_key, &kafka_cmd_id, sizeof(kafka_cmd_id));
+
+    char uuid[37];
+    uuid_t binuuid;
+    uuid_generate_random(binuuid);
+    uuid_unparse(binuuid, uuid);
+    kafka_key = sdscatlen(kafka_key, uuid, 37);
+
+    return kafka_key;
+}
 
 static sds cal_kafka_key_in_producer_thread(sds msg) {
+    if (!server.kafka_compcation) return NULL;
+
     int is_exec_msg = check_exec_msg(msg);
     
     if (is_exec_msg) {
@@ -838,8 +1200,26 @@ static sds cal_kafka_key_in_producer_thread(sds msg) {
 
         sds kafka_key = NULL;
         if (strcasecmp(command, "set") == 0) {
-            kafka_key = cal_kafka_key_for_set(no_exec_args);
+            kafka_key = cal_kafka_key_for_set(dbid, no_exec_args);
+        } else if (strcasecmp(command, "getset") == 0) {
+            kafka_key = cal_kafka_key_for_getset(dbid, no_exec_args);
+        } else if (strcasecmp(command, "getset") == 0) {
+            kafka_key = cal_kafka_key_for_getset(dbid, no_exec_args);
+        } else if (strcasecmp(command, "getdel") == 0) {
+            kafka_key = cal_kafka_key_for_getdel(dbid, no_exec_args);
+        } else if (strcasecmp(command, "hset") == 0) {
+            kafka_key = cal_kafka_key_for_hset(dbid, no_exec_args);
+        } else if (strcasecmp(command, "hmset") == 0) {
+            kafka_key = cal_kafka_key_for_hmset(dbid, no_exec_args);
+        } else if (strcasecmp(command, "hdel") == 0) {
+            kafka_key = cal_kafka_key_for_hdel(dbid, no_exec_args);
+        } else if (strcasecmp(command, "del") == 0) {
+            kafka_key = cal_kafka_key_for_del(dbid, no_exec_args);
+        } else if (strcasecmp(command, "unlink") == 0) {
+            kafka_key = cal_kafka_key_for_unlink(dbid, no_exec_args);
         }
+
+        if (!kafka_key) kafka_key = cal_kafka_key_for_pk();
 
         // recycle the resource allocated by parse_msg_for_no_exec()
         sdsfree(command);
@@ -848,6 +1228,7 @@ static sds cal_kafka_key_in_producer_thread(sds msg) {
             listRelease(no_exec_args);
         }
 
+        serverAssert(kafka_key);
         return kafka_key;
     }
 }
@@ -857,11 +1238,13 @@ static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic
     serverAssert(msg);
 
     sds kafka_key = cal_kafka_key_in_producer_thread(msg);
+    serverAssert(kafka_key);
+
     int errno;
     while (1) {
         // NOTE: msg_opaque parameter needs to be msg to reclame the memory in db_msg_cb()
         errno = rd_kafka_produce(rkt, 0, 0, msg, sdslen(msg), 
-                                 kafka_key, (kafka_key ? sdslen(kafka_key) : 0), msg);    
+                                 kafka_key, kafka_key ? sdslen(kafka_key) : 0, msg);    
 
         switch (errno) {
         case 0:

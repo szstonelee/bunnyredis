@@ -111,6 +111,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
     long long milliseconds = 0, when = 0; /* initialized to avoid any harmness warning */
 
     if (expire) {
+        serverPanic("BunnyRedis: setGenericCommand() can not be executed with expire!");
         if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != C_OK)
             return;
         if (milliseconds <= 0 || (unit == UNIT_SECONDS && milliseconds > LLONG_MAX / 1000)) {
@@ -203,8 +204,101 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
  * Input flags are updated upon parsing the arguments. Unit and expire are updated if there are any
  * EX/EXAT/PX/PXAT arguments. Unit is updated to millisecond if PX/PXAT is set.
  */
-int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type, int from_strem_check) {
 
+/* NOTE(see above first): we change the original parseExtendedStringArgumentsOrReply() to two: 
+ * 1: parseExtendedStringArgumentsOrReply.
+ * 2: parseExtendedStringArgumentsWithoutReply */
+int parseExtendedStringArgumentsWithoutReply(client *c, int *flags, int *unit, robj **expire, int command_type) {
+    int j = command_type == COMMAND_GET ? 2 : 3;
+    for (; j < c->argc; j++) {
+        char *opt = c->argv[j]->ptr;
+        robj *next = (j == c->argc-1) ? NULL : c->argv[j+1];
+
+        if ((opt[0] == 'n' || opt[0] == 'N') &&
+            (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
+            !(*flags & OBJ_SET_XX) && !(*flags & OBJ_SET_GET) && (command_type == COMMAND_SET))
+        {
+            *flags |= OBJ_SET_NX;
+        } else if ((opt[0] == 'x' || opt[0] == 'X') &&
+                   (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
+                   !(*flags & OBJ_SET_NX) && (command_type == COMMAND_SET))
+        {
+            *flags |= OBJ_SET_XX;
+        } else if ((opt[0] == 'g' || opt[0] == 'G') &&
+                   (opt[1] == 'e' || opt[1] == 'E') &&
+                   (opt[2] == 't' || opt[2] == 'T') && opt[3] == '\0' &&
+                   !(*flags & OBJ_SET_NX) && (command_type == COMMAND_SET))
+        {
+            *flags |= OBJ_SET_GET;
+        } else if (!strcasecmp(opt, "KEEPTTL") && !(*flags & OBJ_PERSIST) &&
+            !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
+            !(*flags & OBJ_PX) && !(*flags & OBJ_PXAT) && (command_type == COMMAND_SET))
+        {
+            *flags |= OBJ_KEEPTTL;
+        } else if (!strcasecmp(opt,"PERSIST") && (command_type == COMMAND_GET) &&
+               !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
+               !(*flags & OBJ_PX) && !(*flags & OBJ_PXAT) &&
+               !(*flags & OBJ_KEEPTTL))
+        {
+            *flags |= OBJ_PERSIST;
+        } else if ((opt[0] == 'e' || opt[0] == 'E') &&
+                   (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
+                   !(*flags & OBJ_KEEPTTL) && !(*flags & OBJ_PERSIST) &&
+                   !(*flags & OBJ_EXAT) && !(*flags & OBJ_PX) &&
+                   !(*flags & OBJ_PXAT) && next)
+        {
+            *flags |= OBJ_EX;
+            *expire = next;
+            j++;
+        } else if ((opt[0] == 'p' || opt[0] == 'P') &&
+                   (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
+                   !(*flags & OBJ_KEEPTTL) && !(*flags & OBJ_PERSIST) &&
+                   !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
+                   !(*flags & OBJ_PXAT) && next)
+        {
+            *flags |= OBJ_PX;
+            *unit = UNIT_MILLISECONDS;
+            *expire = next;
+            j++;
+        } else if ((opt[0] == 'e' || opt[0] == 'E') &&
+                   (opt[1] == 'x' || opt[1] == 'X') &&
+                   (opt[2] == 'a' || opt[2] == 'A') &&
+                   (opt[3] == 't' || opt[3] == 'T') && opt[4] == '\0' &&
+                   !(*flags & OBJ_KEEPTTL) && !(*flags & OBJ_PERSIST) &&
+                   !(*flags & OBJ_EX) && !(*flags & OBJ_PX) &&
+                   !(*flags & OBJ_PXAT) && next)
+        {
+            *flags |= OBJ_EXAT;
+            *expire = next;
+            j++;
+        } else if ((opt[0] == 'p' || opt[0] == 'P') &&
+                   (opt[1] == 'x' || opt[1] == 'X') &&
+                   (opt[2] == 'a' || opt[2] == 'A') &&
+                   (opt[3] == 't' || opt[3] == 'T') && opt[4] == '\0' &&
+                   !(*flags & OBJ_KEEPTTL) && !(*flags & OBJ_PERSIST) &&
+                   !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
+                   !(*flags & OBJ_PX) && next)
+        {
+            *flags |= OBJ_PXAT;
+            *unit = UNIT_MILLISECONDS;
+            *expire = next;
+            j++;
+        } else {
+            return C_ERR;
+        }
+    }
+    return C_OK;
+}
+
+int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type) {
+    int ret = parseExtendedStringArgumentsWithoutReply(c, flags, unit, expire, command_type);
+    if (ret == C_OK) {
+        return C_OK;
+    } else {
+        addReplyErrorObject(c,shared.syntaxerr);
+        return C_ERR;
+    }
+/*
     int j = command_type == COMMAND_GET ? 2 : 3;
     for (; j < c->argc; j++) {
         char *opt = c->argv[j]->ptr;
@@ -286,6 +380,7 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
         }
     }
     return C_OK;
+*/
 }
 
 /* SET key value [NX] [XX] [KEEPTTL] [GET] [EX <seconds>] [PX <milliseconds>]
@@ -295,7 +390,7 @@ void setCommand(client *c) {
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
 
-    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_SET, 0) != C_OK) {
+    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_SET) != C_OK) {
         return;
     }
 
@@ -369,7 +464,7 @@ void getexCommand(client *c) {
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
 
-    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_GET, 0) != C_OK) {
+    if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_GET) != C_OK) {
         return;
     }
 

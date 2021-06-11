@@ -18,7 +18,7 @@
 #define CONSUMER_STARTUP_OPEN_TO_CLIENTS  2
 
 // API from t_string.c
-int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type, int from_strem_check);
+int parseExtendedStringArgumentsWithoutReply(client *c, int *flags, int *unit, robj **expire, int command_type);
 
 // API from networking.c
 void commandProcessed(client *c);

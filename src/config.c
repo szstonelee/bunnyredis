@@ -2460,6 +2460,7 @@ standardConfig configs[] = {
     createBoolConfig("replica-announced", NULL, MODIFIABLE_CONFIG, server.replica_announced, 1, NULL, NULL),
     /* config whether deny write command when memory is over limit */
     createBoolConfig("bunnydeny", NULL, MODIFIABLE_CONFIG, server.bunny_deny, 1, NULL, NULL),
+    createBoolConfig("kafkaCompact", NULL, IMMUTABLE_CONFIG, server.kafka_compcation, 0, NULL, NULL),
 
     /* String Configs */
     createStringConfig("aclfile", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.acl_filename, "", NULL, NULL),

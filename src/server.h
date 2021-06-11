@@ -1684,6 +1684,9 @@ struct redisServer {
 
     // dict *evict_hash_candidates;    /* evict hash candidates for all dbs */
     evictHash evic_hash_candidates[EVICT_HASH_CANDIDATES_MAX_SIZE];
+
+    // indicating whether support kafka compaction
+    int kafka_compcation;
 };
 
 client* lookupStreamCurrentClient();
