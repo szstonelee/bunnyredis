@@ -1115,7 +1115,8 @@ void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, 
 }
 
 /* check the index argument of c to form rock_keys list 
- * NOTE: the type can not be pure hash because some fields in pure hash could be in Rock */
+ * if the type is pure hash, we return NULL because the caller does not care about the pure hash
+ * for example: getset command will overwrite, and setbit will return failure for type checking */
 list* genericGetOneKeyExcludePureHashForRock(client *c, int index) {
     uint8_t dbid = c->db->id;
     dict *dict_db = (server.db+dbid)->dict;
@@ -1125,9 +1126,11 @@ list* genericGetOneKeyExcludePureHashForRock(client *c, int index) {
 
     robj *o = dictGetVal(de_db);
 
-    if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT)
+    if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) return NULL;
+    /*
         serverPanic("genericGetOneKeyExcludePureHashForRock() can not be called when pure hash, key = %s, cmd = %s", 
                     key, (sds)c->argv[0]->ptr);
+    */
 
     if (!(o->type == OBJ_STRING || (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_ZIPLIST)))
         return NULL;

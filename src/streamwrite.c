@@ -309,130 +309,56 @@ static int check_nx_xx_for_set_comomand(client *c) {
     return 0;
 }
 
-static int is_forbidden_cmd_in_compation(char *cmd) {
-    serverAssert(server.kafka_compcation);
-    if (strcasecmp(cmd, "msetnx") == 0) {
+/* reference https://redis.io/commands#pubsub */
+static int is_pubsub_cmd(char *cmd) {
+    if (strcasecmp(cmd, "psubscribe") == 0) {
         return 1;
-    } else if (strcasecmp(cmd, "setnx") == 0) {
+    } else if (strcasecmp(cmd, "pubsub") == 0) {
         return 1;
-    } else if (strcasecmp(cmd, "append") == 0) {
+    } else if (strcasecmp(cmd, "publish") == 0) {
         return 1;
-    } else if (strcasecmp(cmd, "decr") == 0) {
+    } else if (strcasecmp(cmd, "punsubscribe") == 0) {
         return 1;
-    } else if (strcasecmp(cmd, "decrby") == 0) {
+    } else if (strcasecmp(cmd, "subscribe") == 0) {
         return 1;
-    } else if (strcasecmp(cmd, "incr") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "incrby") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "incrbyfloat") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "setbit") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "setrange") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "geoadd") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "pfadd") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "pfmerge") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "hincrby") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "hincrbyfloat") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "hsetnx") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "sadd") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "sdiffstore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "sinter") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "sinterstore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "smove") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "spop") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "srem") == 0) {
-        return 1;        
-    } else if (strcasecmp(cmd, "sunion") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "sunionstore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "copy") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "move") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "rename") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "renamenx") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "lpushhx") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "lpushhx") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "lrem") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "lset") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "ltrim") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "lpop") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "rpop") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "rpoplpush") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "lmove") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "rpushhx") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zadd") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zdiffstore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zincrby") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zinterstore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zpopmax") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zpopmin") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zrangestore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zrem") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zremrangebylex") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zremrangebyrank") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zremrangebyscore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zunion") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "zunionstore") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "xadd") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "xtrim") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "xdel") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "xgroup") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "xack") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "xclaim") == 0) {
-        return 1;
-    } else if (strcasecmp(cmd, "xautoclaim") == 0) {
+    } else if (strcasecmp(cmd, "unsubscribe") == 0) {
         return 1;
     } else {
         return 0;
     }
+}
 
+static int is_forbidden_cmd_in_compaction(char *cmd) {
+    serverAssert(server.kafka_compcation);
+
+    // check cal_kafka_key_for_xxx to see which commands are not forbidden in compaction mode
+    if (strcasecmp(cmd, "del") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "getdel") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "getset") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "hdel") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "hmset") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "hset") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "set") == 0) {
+        return 0;       // NOTE: set need further check for nx and xx
+    } else if (strcasecmp(cmd, "unlink") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "acl") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "flushall") == 0) {
+        return 0;
+    } else if (strcasecmp(cmd, "flushdb") == 0) {
+        return 0;
+    } else if (is_pubsub_cmd(cmd)) {
+        return 0;
+    } else {
+        return 1;
+    }
 }
 
 /* What is a virtual client ? 
@@ -450,8 +376,8 @@ static int is_forbidden_cmd_in_compation(char *cmd) {
  *         STREAM_CHECK_EMPTY_TRAN. The caller can go on. no need to check rock key and STREAM WAITING STATE
  *         STREAM_CHECK_SET_STREAM. Start the stream phase 
  * NOTE: special for set command. If it has expire argument, it will be determined as forbidden */
-#define OBJ_NO_FLAGS 0      // check t_string.c, it is duplicated
-#define COMMAND_SET 1       // check t_string.c, it is duplicated
+#define OBJ_NO_FLAGS    0       // check t_string.c, it is duplicated
+#define COMMAND_SET     1       // check t_string.c, it is duplicated
 int checkAndSetStreamWriting(client *c) {
     // The caller is concrete client and the state is STREAM_WRITE_INIT
     serverAssert(c->streamWriting == STREAM_WRITE_INIT && c != server.virtual_client);
@@ -467,6 +393,11 @@ int checkAndSetStreamWriting(client *c) {
     if (cmd->streamCmdCategory == STREAM_FORBIDDEN_CMD) {
         rejectCommandFormat(c,"BunnyRedis forbids '%s' command", c->argv[0]->ptr);
         return STREAM_CHECK_FORBIDDEN;
+    } else if (cmd->streamCmdCategory == STREAM_NO_NEED_CMD) {
+        // if the command is not a stream command 
+        // e.g. all read commands or single node command like config, dbsize, connection, 
+        // just go on
+        return STREAM_CHECK_GO_ON_NO_ERROR;
     }
 
     // command basic parameters number is not OK
@@ -501,7 +432,7 @@ int checkAndSetStreamWriting(client *c) {
 
     // check whether support kafka compaction, if enable compaction, some commands are forbidden
     if (server.kafka_compcation) {
-        if (is_forbidden_cmd_in_compation(c->argv[0]->ptr)) {
+        if (is_forbidden_cmd_in_compaction(c->argv[0]->ptr)) {
             rejectCommandFormat(c,"BunnyRedis forbids '%s' command because kafka compaction enabled", c->argv[0]->ptr);
             return STREAM_CHECK_FORBIDDEN;
         }

@@ -39,9 +39,13 @@ ulimit -n
 
 ```
 ./bunny-redis ./redis.conf --nodeid 1
- ./bunny-redis ./redis.conf --nodeid 2 --port 6380 --rockdbpath /tmp/bunnydb2
- # check how many open for a user
+./bunny-redis ./redis.conf --nodeid 2 --port 6380 --rockdbpath /tmp/bunnydb2
+ # check how many files open for a user
 lsof -u root | wc -l
+
+if run compaction test (set kafka first)
+./bunny-redis ./redis.conf --nodeid 1 --kafkaCompact yes
+./bunny-redis ./redis.conf --nodeid 2 --port 6380 --rockdbpath /tmp/bunnydb2 --kafkaCompact yes
 ```
 
 Redis memory: add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect
