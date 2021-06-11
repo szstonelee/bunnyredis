@@ -1238,7 +1238,6 @@ static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic
     serverAssert(msg);
 
     sds kafka_key = cal_kafka_key_in_producer_thread(msg);
-    serverAssert(kafka_key);
 
     int errno;
     while (1) {
