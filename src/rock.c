@@ -1265,6 +1265,11 @@ list* hGenericGetOneKeyOfZiplistForRock(client *c) {
 
     robj *o = dictGetVal(de_db);
     if (!o) return NULL;
+
+    // if the object is string, we do not need to recover it
+    // because the caller will fail the type checkings
+    if (o->type == OBJ_STRING) return NULL;     
+
     serverAssert(o->type == OBJ_HASH);
 
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {

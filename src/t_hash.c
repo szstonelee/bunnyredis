@@ -772,10 +772,9 @@ void hsetCommand(client *c) {
         checkAddToEvictHashCandidates(c->db->id, created, c->argv[1]->ptr);
 }
 
-/* although hset use multi fields, but the value is overriden, 
- * so we only revocer the key when the key is encoding as ziplist
- * if the key is encoding as hash, the field'value will be voerridden,
- * so no need to restore the field rock value */ 
+/* we need restore the whole key only for ziplist
+ * it it is a key os string in rock, we do not need to recover
+ * because the hset command will fail for checking the type */ 
 list* hsetCmdForRock(client *c) {
     return hGenericGetOneKeyOfZiplistForRock(c);
 }
