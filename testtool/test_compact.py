@@ -135,7 +135,7 @@ def _main():
     r1.flushall()
     r2.flushall()
 
-    input("please start r1, r2 with compaction enable and hit return to go on ...")
+    input("please set Kafka cleanup.policy to compact and hit return to go on ...")
 
     use_compact_cmds_for_a_while(1800)
 

@@ -2460,7 +2460,7 @@ standardConfig configs[] = {
     createBoolConfig("replica-announced", NULL, MODIFIABLE_CONFIG, server.replica_announced, 1, NULL, NULL),
     /* config whether deny write command when memory is over limit */
     createBoolConfig("bunnydeny", NULL, MODIFIABLE_CONFIG, server.bunny_deny, 1, NULL, NULL),
-    createBoolConfig("kafkaCompact", NULL, IMMUTABLE_CONFIG, server.kafka_compcation, 0, NULL, NULL),
+    // createBoolConfig("kafkaCompact", NULL, IMMUTABLE_CONFIG, server.kafka_compcation, 0, NULL, NULL),
 
     /* String Configs */
     createStringConfig("aclfile", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.acl_filename, "", NULL, NULL),
@@ -2534,7 +2534,7 @@ standardConfig configs[] = {
     /* Unsigned int configs */
     createUIntConfig("maxclients", NULL, MODIFIABLE_CONFIG, 1, UINT_MAX, server.maxclients, 10000, INTEGER_CONFIG, NULL, updateMaxclients),
     // node_id in [0,255] because we encode it in uintt8_t
-    createUIntConfig("nodeid", NULL, IMMUTABLE_CONFIG, 0, 255, server.node_id, 255, INTEGER_CONFIG, NULL, NULL),
+    // createUIntConfig("nodeid", NULL, IMMUTABLE_CONFIG, 0, 255, server.node_id, 255, INTEGER_CONFIG, NULL, NULL),
 
     /* Unsigned Long configs */
     createULongConfig("active-defrag-max-scan-fields", NULL, MODIFIABLE_CONFIG, 1, LONG_MAX, server.active_defrag_max_scan_fields, 1000, INTEGER_CONFIG, NULL, NULL), /* Default: keys with more than 1000 fields will be processed separately */
@@ -2552,7 +2552,7 @@ standardConfig configs[] = {
 
     /* Unsigned Long Long configs */
     createULongLongConfig("maxmemory", NULL, IMMUTABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
-    createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, 10<<20, ULLONG_MAX, server.bunnymem, 20<<20, MEMORY_CONFIG, NULL, updateBunnymem),
+    createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, MIN_BUNNY_MEMORY_SIZE, ULLONG_MAX, server.bunnymem, MIN_BUNNY_MEMORY_SIZE, MEMORY_CONFIG, NULL, updateBunnymem),
 
     /* Size_t configs */
     createSizeTConfig("hash-max-ziplist-entries", NULL, MODIFIABLE_CONFIG, 0, LONG_MAX, server.hash_max_ziplist_entries, 512, INTEGER_CONFIG, NULL, NULL),

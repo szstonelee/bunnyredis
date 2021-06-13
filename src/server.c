@@ -66,6 +66,7 @@
 #include "rock.h"
 #include "streamwrite.h"
 #include "rockevict.h"
+#include "zk.h"
 
 /* Our shared "common" objects */
 
@@ -3519,6 +3520,11 @@ void initServer(void) {
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
     }
 
+    if (server.arch_bits == 32) {
+        serverLog(LL_WARNING, "We do not supporrt 32-bit system!");
+        exit(1);
+    }
+
     if (server.cluster_enabled) clusterInit();
     replicationScriptCacheInit();
     scriptingInit(1);
@@ -3534,6 +3540,15 @@ void initServer(void) {
     server.virtual_client->id = VIRTUAL_CLIENT_ID;     // special client id for virtual client
     /* init client id to client* table */
     server.clientIdTable = dictCreate(&clientIdDictType, NULL);
+
+    // set bunnymem to 80% of physical memory if not set by redis.conf or command arguments
+    if (server.bunnymem == MIN_BUNNY_MEMORY_SIZE)
+        server.bunnymem = server.system_memory_size * 0.8;
+
+    // zookeeper init and get node id
+    uint8_t node_id = init_zk_and_get_node_id("127.0.0.1:2181");
+    serverLog(LL_NOTICE, "init_zk_and_get_node_id() return node_id = %d", node_id);
+    server.node_id = node_id;
 
     /* stream write producer init. NOTE: must before consumer init because main thread need it to check kafka state */
     initKafkaProducer();
@@ -3552,6 +3567,7 @@ void initServer(void) {
     // init 
     // server.evict_hash_candidates = dictCreate(&evictHashCandidatesDictType,NULL);
     memset(server.evic_hash_candidates, 0, sizeof(evictHash)*EVICT_HASH_CANDIDATES_MAX_SIZE);
+
 }
 
 /* Some steps in server initialization need to be done last (after modules

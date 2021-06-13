@@ -424,7 +424,7 @@ int checkAndSetStreamWriting(client *c) {
         // for set we can not use "nx" or "xx" arg with set
         if (server.kafka_compcation) {
             if (check_nx_xx_for_set_comomand(c)) {
-                rejectCommandFormat(c,"BunnyRedis forbids '%s' command with nx or xx argument because kafka compaction enabled", c->argv[0]->ptr);
+                rejectCommandFormat(c,"BunnyRedis forbids '%s' command with nx or xx argument because kafka compact enabled", c->argv[0]->ptr);
                 return STREAM_CHECK_FORBIDDEN;
             }
         }
@@ -433,7 +433,7 @@ int checkAndSetStreamWriting(client *c) {
     // check whether support kafka compaction, if enable compaction, some commands are forbidden
     if (server.kafka_compcation) {
         if (is_forbidden_cmd_in_compaction(c->argv[0]->ptr)) {
-            rejectCommandFormat(c,"BunnyRedis forbids '%s' command because kafka compaction enabled", c->argv[0]->ptr);
+            rejectCommandFormat(c,"BunnyRedis forbids '%s' command because kafka compact enabled", c->argv[0]->ptr);
             return STREAM_CHECK_FORBIDDEN;
         }
     }
@@ -1631,8 +1631,8 @@ static void* entryInConsumerThread(void *arg) {
 
         if (!rkm) {
             // check whether the startup work of consumer is finished
-            if (no_message_cnt == 10) {
-                // at least 20 times timeout (1 second) no log is coming because only one time poll() may be not correct
+            if (no_message_cnt == 20) {
+                // at least 20 times timeout (2 seconds) no log is coming because only one time poll() may be not correct
                 // when read from kafka at startup, there is some chance to timeout at the beginning
                 int consumer_startup;
                 atomicGet(kafkaStartupConsumeFinish, consumer_startup);

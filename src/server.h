@@ -1199,6 +1199,7 @@ typedef struct evictHash {
     long long rock_cnt;
 } evictHash;
 
+#define MIN_BUNNY_MEMORY_SIZE   (10<<20)
 
 struct redisServer {
     /* General */
