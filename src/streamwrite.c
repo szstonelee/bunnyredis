@@ -4,6 +4,7 @@
 #include "endianconv.h"
 #include "rock.h"
 #include "streamwrite.h"
+#include "zk.h"
 
 #include <librdkafka/rdkafka.h>
 #include <uuid/uuid.h>
@@ -20,9 +21,9 @@ static pthread_spinlock_t producerLock;
 
 #define RCV_MSGS_TOO_LONG   1000    // if we recevice to much messages and not quick to consume, it just warns
 
-static int kafkaReadyAndTopicCorrect = 0;   // producer start for check kafka state and main thread check it for correctness
+static int kafkaReadyAndTopicCorrect = 0;   // producer startup check kafka state and main thread wait it for correctness
 redisAtomic int kafkaStartupConsumeFinish;   // when startup, finish all consume data, then unpause all clients to start working
-static const char *bootstrapBrokers = "127.0.0.1:9092,";
+static const char *bootstrapBrokers = NULL;
 static const char *bunnyRedisTopic = "redisStreamWrite"; 
 
 static list* sndMsgs;  // producer and main thread contented data
@@ -133,6 +134,9 @@ static sds marshall_for_exec(client *c) {
 /* Main thread call this to add command to sndMsgs 
  * We think every parameter (including command name) stored in client argv is String Object */
 static void addCommandToStreamWrite(client *c) {
+    // it is wrong if sending msg when consumer is in startup state 
+    serverAssert(server.node_id != CONSUMER_STARTUP_NODE_ID);   
+
     // serialize the command
     sds buf;
     if (c->flags & CLIENT_MULTI) {
@@ -1223,6 +1227,8 @@ static void* entryInProducerThread(void *arg) {
     rd_kafka_topic_conf_t *topicConf;
     char errstr[512];  
 
+    serverAssert(bootstrapBrokers);
+
     conf = rd_kafka_conf_new();
     if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrapBrokers,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
@@ -1284,6 +1290,8 @@ static void* entryInProducerThread(void *arg) {
  * but main thead need use spin lock to guarantee no context switch to kernel  
  * for kafka idompootent C code, reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 void initKafkaProducer() {
+    bootstrapBrokers = get_kafka_broker();
+
     pthread_t producer_thread;
 
    int spin_init_res = pthread_spin_init(&producerLock, 0);
@@ -1557,6 +1565,19 @@ static void addRcvMsgInConsumerThread(size_t len, void *payload) {
     unlockConsumerData();
 }
 
+/*  retrieve current offset range [lo, hi), If topic never created, it will fail and exit 
+ *  guararntee:
+ *             1. lo <= hi
+ *             2. lo <= hi and lo >= 0 */
+static void get_offset_range(rd_kafka_t *rk, int64_t *lo, int64_t *hi) {
+    rd_kafka_resp_err_t err = rd_kafka_query_watermark_offsets(rk, bunnyRedisTopic, 0, lo, hi, 2000);
+    if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+        serverLog(LL_WARNING, "get_offset_range() failed, err = %s", rd_kafka_err2str(err));
+        exit(1);
+    }
+    serverAssert(*lo >= 0 && *lo <= *hi);
+}
+
 /* this is the consumer thread entrance */
 static void* entryInConsumerThread(void *arg) {
     UNUSED(arg);
@@ -1565,8 +1586,8 @@ static void* entryInConsumerThread(void *arg) {
     rd_kafka_conf_t *conf;   /* Temporary configuration object */
     rd_kafka_resp_err_t err; /* librdkafka API error code */
     char errstr[512];        /* librdkafka API error reporting buffer */
-    rd_kafka_topic_partition_list_t *subscription; /* Subscribed topics */
-    rd_kafka_topic_partition_t *zeroPartion;
+    rd_kafka_topic_partition_list_t *partition_list; /* Subscribed topics */
+    rd_kafka_topic_partition_t *zero_partition;
 
     rcvMsgs = listCreate();
 
@@ -1575,6 +1596,8 @@ static void* entryInConsumerThread(void *arg) {
     uuid_t binuuid;
     uuid_generate_random(binuuid);
     uuid_unparse(binuuid, uuid);
+
+    serverAssert(bootstrapBrokers);
 
     conf = rd_kafka_conf_new();
     if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrapBrokers, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
@@ -1595,69 +1618,63 @@ static void* entryInConsumerThread(void *arg) {
     conf = NULL; /* Configuration object is now owned, and freed, by the rd_kafka_t instance. */
     rd_kafka_poll_set_consumer(rk);
  
-    subscription = rd_kafka_topic_partition_list_new(1);
-    zeroPartion = rd_kafka_topic_partition_list_add(subscription, bunnyRedisTopic, 0);
-    // zeroPartion->offset = START_OFFSET;
-    zeroPartion->offset = RD_KAFKA_OFFSET_BEGINNING;
+    partition_list = rd_kafka_topic_partition_list_new(1);
+    zero_partition = rd_kafka_topic_partition_list_add(partition_list, bunnyRedisTopic, 0);
     /* Subscribe to the list of topics, NOTE: only one in the list of topics */
-    err = rd_kafka_assign(rk, subscription);
+    zero_partition->offset = RD_KAFKA_OFFSET_BEGINNING;
+    err = rd_kafka_assign(rk, partition_list);
     if (err) 
         serverPanic("initKafkaConsumer failed for rd_kafka_subscribe() reason = %s", rd_kafka_err2str(err));
     
-    // seek the start of offset
-    rd_kafka_error_t *seek_err;
-    seek_err = rd_kafka_seek_partitions(rk, subscription, 2000);
-    if (seek_err) {
-        serverLog(LL_WARNING, "rd_kafka_seek_partitions() failed! reason = %s", rd_kafka_err2str(rd_kafka_error_code(seek_err)));
-        exit(1);
+    int64_t lo_offset, hi_offset;
+    get_offset_range(rk, &lo_offset, &hi_offset); 
+    serverLog(LL_NOTICE, "Kafka log offset range is [%ld, %ld), total need resume = %ld", 
+              lo_offset, hi_offset, hi_offset-lo_offset);
+    check_or_set_offset(lo_offset);
+
+    rd_kafka_topic_partition_list_destroy(partition_list);
+
+    // loop for Kafka messages
+    monotime startupCheckTimer = 0;
+    int is_first_msg_arrived = 0;
+    if (lo_offset == hi_offset) {
+        atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
+        is_first_msg_arrived = 1;
+        serverLog(LL_NOTICE, "consumer startup does not need to recover Kafka old messages.");
+    } else {
+        elapsedStart(&startupCheckTimer);
     }
-    rd_kafka_topic_partition_t start_info = subscription->elems[0];
-    serverAssert(subscription->cnt == 1);
-    if (start_info.err) {
-        serverLog(LL_WARNING, "error = %s", rd_kafka_err2str(start_info.err));
-        exit(1);
-    } 
-    int64_t start_offset = start_info.offset;
-    serverLog(LL_WARNING, "start offset = %lu", start_offset);
-    
-    rd_kafka_topic_partition_list_destroy(subscription);
-
-    static int no_message_cnt = 0;
-    long long startup_cnt = 0;
-    monotime startupCheckTimer = 0;   
-
     while(1) {
         rd_kafka_message_t *rkm = rd_kafka_consumer_poll(rk, 100);
 
-        if (!rkm) {
-            // check whether the startup work of consumer is finished
-            if (no_message_cnt == 20) {
-                // at least 20 times timeout (2 seconds) no log is coming because only one time poll() may be not correct
-                // when read from kafka at startup, there is some chance to timeout at the beginning
-                int consumer_startup;
-                atomicGet(kafkaStartupConsumeFinish, consumer_startup);
-                if (consumer_startup == CONSUMER_STARTUP_START) {
-                    // signal to serverCron()
-                    atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
-                    // kafkaStartupConsumeFinish = CONSUMER_STARTUP_FINISH;
-                }
-            }
-            ++no_message_cnt;
+        if (!rkm) 
             continue;     // timeout with no message 
-        }
-
+        
         if (rkm->err) {
             if (rkm->err == RD_KAFKA_RESP_ERR__AUTO_OFFSET_RESET) {
-                serverLog(LL_WARNING, "offset %d for Broker: Offset out of range!!!", START_OFFSET);
+                serverLog(LL_WARNING, "offset for Broker: Offset out of range!!! rkm->offset = %ld", rkm->offset);
                 exit(1);
             }
-            serverLog(LL_WARNING, "Consumer error(but Kafka can handle): err = %d, reason = %s", 
+            serverLog(LL_WARNING, "Consumer error but Kafka can handle: err = %d, reason = %s", 
                       rkm->err, rd_kafka_message_errstr(rkm));
             rd_kafka_message_destroy(rkm);
             continue;
         }
 
-        // proper message
+        // proper message. The following process the message and set up startup state
+
+        // check whether first message offset is matched
+        int64_t cur_offset = rkm->offset;
+        serverAssert(cur_offset >= 0);
+        if (!is_first_msg_arrived) {
+            is_first_msg_arrived = 1;
+            if (cur_offset != lo_offset) {
+                serverLog(LL_WARNING, "the first Kafka message's offset not match, first offset = %ld, lo_offset = %ld",
+                          cur_offset, lo_offset);
+                exit(1);
+            }
+        } 
+
         serverAssert(strcmp(rd_kafka_topic_name(rkm->rkt), bunnyRedisTopic) == 0 && rkm->len > 0);
         addRcvMsgInConsumerThread(rkm->len, rkm->payload);
         // notify main thread to perform streamConsumerSignalHandler()
@@ -1665,22 +1682,21 @@ static void* entryInConsumerThread(void *arg) {
     
         rd_kafka_message_destroy(rkm);
 
-        // log some info for startup (if resuming msg are too long)
-        if (startup_cnt == 0) elapsedStart(&startupCheckTimer);
-        startup_cnt++;
-        int consumer_startup;
-        atomicGet(kafkaStartupConsumeFinish, consumer_startup);
-        if (consumer_startup == CONSUMER_STARTUP_START) {
-            if (startup_cnt % 10000 == 0) {
-                serverLog(LL_NOTICE, "consumer thread is resuming Kafka log, now count = %lld", startup_cnt);
-                if (elapsedMs(startupCheckTimer) > 3000) {
-                    // if it take too long (1 seconds) to process the 10000 msgs
-                    // it means the consumer is caught-up
-                    atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
-                    serverLog(LL_NOTICE, "consumer thread believes it can catch up with Kafka.");
-                } else {
-                    elapsedStart(&startupCheckTimer); // 
-                }
+        // check whether the consumer startup is finished
+        if (cur_offset >= hi_offset - 1) {
+            int consumer_startup;
+            atomicGet(kafkaStartupConsumeFinish, consumer_startup);
+            if (consumer_startup == CONSUMER_STARTUP_START) {
+                atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_FINISH);
+                serverLog(LL_NOTICE, "consumer startup finished recovering Kafka old messages.");
+            }
+        } else {
+            // report progress of startup
+            int64_t processed_cnt = cur_offset - lo_offset + 1;
+            if (processed_cnt % 10000 == 0) {
+                serverLog(LL_NOTICE, "consumer thread is resuming Kafka log, processed count = %ld, ms = %lu",
+                          processed_cnt, elapsedMs(startupCheckTimer));
+                elapsedStart(&startupCheckTimer);
             }
         }
     }

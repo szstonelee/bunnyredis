@@ -1,3 +1,15 @@
+Kafka FAQ: https://cwiki.apache.org/confluence/display/KAFKA/FAQ#FAQ-ShouldIchoosemultiplegroupidsorasingleonefortheconsumers?
+
+```
+1. list all consumer groups
+bin/kafka-consumer-groups.sh  --list --bootstrap-server localhost:9092
+2. check one group client offset
+bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group my-group
+3. delete consumer group
+bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --delete --group <group-name>
+4. offset range
+bin/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --topic redisStreamWrite --time -1
+```
 
 set retention and cleanup policy
 ```

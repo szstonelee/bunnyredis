@@ -2175,6 +2175,37 @@ static int isValidActiveDefrag(int val, const char **err) {
     return 1;
 }
 
+int isValidZk(char *val, const char **err) {
+    if (!val) {
+        *err = "zookeeper server can not be empty";
+        return 0;
+    }
+
+    int dot_cnt = 0;
+    int colon_cnt = 0;
+    int other_all_digit = 1;
+    for (size_t i = 0; i < strlen(val); ++i) {
+        char ch = val[i];
+        if (ch == '.') {
+            ++dot_cnt;
+        } else if (ch == ':') {
+            ++colon_cnt;
+        } else {
+            if (!(ch >= '0' && ch <= '9')) {
+                other_all_digit = 0;
+                break;
+            }
+        }
+    }
+
+    if (!other_all_digit || !(dot_cnt == 3 && colon_cnt == 1)) {
+        *err = "zookeeper server address is not correct, please use IP4 with port number, e.g. 192.168.0.1:2181";
+        return 0;
+    }
+
+    return 1;
+}
+
 static int isValidDBfilename(char *val, const char **err) {
     if (!pathIsBaseName(val)) {
         *err = "dbfilename can't be a path, just a filename";
@@ -2479,6 +2510,7 @@ standardConfig configs[] = {
     createStringConfig("ignore-warnings", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.ignore_warnings, "", NULL, NULL),
     createStringConfig("proc-title-template", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.proc_title_template, CONFIG_DEFAULT_PROC_TITLE_TEMPLATE, isValidProcTitleTemplate, updateProcTitleTemplate),
     createStringConfig("rockdbpath", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.bunny_rockdb_path, "/tmp/bunnyrocksdb", NULL, NULL),
+    createStringConfig("zk", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.zk_server, "", isValidZk, NULL),
 
     /* SDS Configs */
     createSDSConfig("masterauth", NULL, MODIFIABLE_CONFIG | SENSITIVE_CONFIG, EMPTY_STRING_IS_NULL, server.masterauth, NULL, NULL, NULL),

@@ -2191,6 +2191,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     if (consumer_startup == CONSUMER_STARTUP_FINISH) {
         // kafkaStartupConsumeFinish = CONSUMER_STARTUP_UNPAUSE;
         atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_OPEN_TO_CLIENTS);
+        serverAssert(server.node_id == CONSUMER_STARTUP_NODE_ID);
+        serverAssert(server.saved_node_id_in_consumer_startup < CONSUMER_STARTUP_NODE_ID);
+        server.node_id = server.saved_node_id_in_consumer_startup;
+        
         serverLog(LL_NOTICE, "consumer thread finished resuming enough log from Kafka and BunnyRedis now is open to all clients.");
     }
 
@@ -3546,9 +3550,17 @@ void initServer(void) {
         server.bunnymem = server.system_memory_size * 0.8;
 
     // zookeeper init and get node id
-    uint8_t node_id = init_zk_and_get_node_id("127.0.0.1:2181");
+    const char *is_valid_zk_err;
+    if (!isValidZk(server.zk_server, &is_valid_zk_err)) {
+        serverLog(LL_WARNING, "initServer() failed for %s", is_valid_zk_err);
+        exit(1);
+    }
+    uint8_t node_id = init_zk_and_get_node_id(server.zk_server);
+    serverAssert(node_id != CONSUMER_STARTUP_NODE_ID);
     serverLog(LL_NOTICE, "init_zk_and_get_node_id() return node_id = %d", node_id);
-    server.node_id = node_id;
+    server.node_id = CONSUMER_STARTUP_NODE_ID;
+    server.saved_node_id_in_consumer_startup = node_id;
+    atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_START); 
 
     /* stream write producer init. NOTE: must before consumer init because main thread need it to check kafka state */
     initKafkaProducer();

@@ -1380,6 +1380,7 @@ struct redisServer {
     int aof_fsync;                  /* Kind of fsync() policy */
     char *aof_filename;             /* Name of the AOF file */
     char *bunny_rockdb_path;        /* folder path for RocksDB */
+    char *zk_server;                /* zookeeper bootstrap server */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
     int aof_rewrite_perc;           /* Rewrite AOF if % growth is > M and... */
     off_t aof_rewrite_min_size;     /* the AOF file is at least N bytes. */
@@ -1674,6 +1675,7 @@ struct redisServer {
     client *virtual_client;   /* The "fake client" to query Redis from stream writer */
 
     unsigned int node_id;    /* distinct node id is the cluster which is defined from config when start server */
+    unsigned int saved_node_id_in_consumer_startup;
 
     dict *clientIdTable;    /* client id to client* hash table */
 

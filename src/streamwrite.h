@@ -6,6 +6,9 @@
 #define NO_STREAM_CLIENT_ID UINT64_MAX
 #define VIRTUAL_CLIENT_ID (UINT64_MAX - 1)
 
+// when consumer is startingup and resume old messages form Kafka. It must be 255
+#define CONSUMER_STARTUP_NODE_ID  255   
+
 #define STREAM_CHECK_SET_STREAM           1     // set stream state
 #define STREAM_CHECK_GO_ON_WITH_ERROR     2     // go on to execute command(including queued the command), check found some error
 #define STREAM_CHECK_GO_ON_NO_ERROR       3     // go on to execute command(including queued the command), check does not found no error
