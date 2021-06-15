@@ -1051,8 +1051,12 @@ static void rockReadSignalHandler(struct aeEventLoop *eventLoop, int fd, void *c
                 if (c->rockKeyNumber == 0) {
                     int is_stream = c->id == server.streamCurrentClientId;
                     processCommandAndResetClient(c);
-                    if (is_stream)
+                    if (is_stream) {
                         need_go_on_for_stream = 1;
+                    }     
+                    // for Redis Pipe. We need read more
+                    if (c->querybuf && sdslen(c->querybuf) > 0) 
+                        processInputBuffer(c);
                 }
             }
         } else {

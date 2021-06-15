@@ -7,7 +7,7 @@ r1.config_set(name="bunnymem", value=20<<20)
 r1.config_set(name="bunnydeny", value="no")
 r2.config_set(name="bunnymem", value=200<<20)
 
-key_scope = 15_000
+key_scope = 50_000
 
 
 def inject():
@@ -19,7 +19,7 @@ def inject():
         if random.randint(0, 9) == 0:
             val = str(random.randint(0, 1000))
         else:
-            val_len = random.randint(1, 10000)
+            val_len = random.randint(2, 2000)
             val = random.choice(string.ascii_letters) * val_len
 
         r.set(name=key, value=val)
