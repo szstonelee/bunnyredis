@@ -23,6 +23,7 @@ void closeRockdb();
 const char* getRockdbPath();
 void debugRockCommand(client *c);
 void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, dictEntry* de);
+int debug_set_string_key_rock(uint8_t dbid, sds key);
 
 void addRockWriteTaskOfString(uint8_t dbid, sds key, sds val);
 void addRockWriteTaskOfZiplist(uint8_t dbid, sds key, unsigned char *zl);

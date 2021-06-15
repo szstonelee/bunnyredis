@@ -2509,7 +2509,7 @@ standardConfig configs[] = {
     createStringConfig("bgsave_cpulist", NULL, IMMUTABLE_CONFIG, EMPTY_STRING_IS_NULL, server.bgsave_cpulist, NULL, NULL, NULL),
     createStringConfig("ignore-warnings", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.ignore_warnings, "", NULL, NULL),
     createStringConfig("proc-title-template", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.proc_title_template, CONFIG_DEFAULT_PROC_TITLE_TEMPLATE, isValidProcTitleTemplate, updateProcTitleTemplate),
-    createStringConfig("rockdbpath", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.bunny_rockdb_path, "/tmp/bunnyrocksdb", NULL, NULL),
+    createStringConfig("rocksdb-parent-folder", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.bunny_rocksdb_parent, "/tmp/bunny_rocksdb", NULL, NULL),
     createStringConfig("zk", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.zk_server, "", isValidZk, NULL),
 
     /* SDS Configs */

@@ -1367,7 +1367,7 @@ void freeClient(client *c) {
             // which set server.streamCurrentClientId in processNoExecCommandForStreamWrite() or processExecCommandForStreamWrite)
             // by caller try_to_execute_stream_commands()
             // we need to switch concrete c to virtual client if c is current stream client
-            setVirtualContextFromConcreteClient(c);
+            setVirtualContextFromWillFreeConcreteClient(c);
         }
         // NOTE: c->id may be not found in server.clientIdTable
         // dictDelete(server.clientIdTable, (const void*)c->id);  
@@ -2794,6 +2794,15 @@ NULL
         }
     } else if (!strcasecmp(c->argv[1]->ptr,"setname") && c->argc == 3) {
         /* CLIENT SETNAME */
+        /* if debug, please commonet the following four lines code */
+        if (strcasecmp(c->argv[2]->ptr, "_debug_") == 0) {
+            addReplyError(c,"CLIENT SETNAME can not use reserved name for _debug_!");
+            return;
+        }
+
+        if (strcasecmp(c->argv[2]->ptr, "_debug_") == 0)
+            server._debug_ = 1;     // start debug. NOTE: in production mode, please enable the above code
+        
         if (clientSetNameOrReply(c,c->argv[2]) == C_OK)
             addReply(c,shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr,"getname") && c->argc == 2) {

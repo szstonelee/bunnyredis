@@ -7,6 +7,7 @@
 #include "assert.h"
 #include <rocksdb/c.h>
 #include <ftw.h>
+#include <libexplain/mkdir.h>
 
 #define START_SLEEP_MICRO   16
 #define MAX_SLEEP_MICRO     1024            // max sleep for 1 ms
@@ -15,7 +16,7 @@
 #define ROCK_HASH_TYPE      1       // For Redis Hash(encoding is hash too). Rocksdb key is coded as dbid(uint8_t) + (uint32_t) key_size + byte of key + byte of field
 #define ROCK_ZIPLIST_TYPE   2       // For Redis Hash(encoding is Ziplist). Rocksdb key is coded as dbid(uint8_t) + byte key of Reds string type 
 
-#define ROCK_WRITE_QUEUE_TOO_LONG   64
+#define ROCK_WRITE_QUEUE_TOO_LONG   256
 #define ROCK_WRITE_PICK_MAX_LEN     1024
 
 // Below is spin lock support
@@ -45,7 +46,6 @@ static void unlockRockWrite() {
 
 // below is stream data structure
 rocksdb_t *rockdb = NULL;
-// const char bunny_rockdb_path[] = "/tmp/bunnyrocksdb";
 
 struct WriteTask {
     // uint8_t type;
@@ -135,6 +135,23 @@ static void report_rocksdb_mem_usage() {
     }
 }
 
+int debug_set_string_key_rock(uint8_t dbid, sds key) {
+    redisDb *db = server.db + dbid;
+    dictEntry *de = dictFind(db->dict, key);
+    if (!de) return 1;
+    robj *val = dictGetVal(de);
+    serverAssert(val);
+    if (val->type != OBJ_STRING) return 2;
+    if (!(val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)) return 3;
+    if (val == shared.keyRockVal) return 4;
+
+    dictSetVal(db->dict, de, shared.keyRockVal);
+    ++db->stat_key_str_rockval_cnt;
+    addRockWriteTaskOfString(dbid, key, val->ptr);
+    decrRefCount(val);
+    return 0;
+}
+
 void debugRockCommand(client *c) {
     sds flag = c->argv[1]->ptr;
 
@@ -144,36 +161,39 @@ void debugRockCommand(client *c) {
             return;
         }
 
-        robj *key = c->argv[2];
-        dictEntry *de = dictFind(c->db->dict, key->ptr);
-        if (!de) {
+        if (!c->name || !c->name->ptr || strcasecmp(c->name->ptr, "_debug_") != 0) {
+            addReplyError(c, "debugrock setstr must be client with name _debug_");
+            return;
+        }
+
+        int ret = debug_set_string_key_rock(c->db->id, c->argv[2]->ptr);
+
+        if (ret == 1) {
             addReplyError(c, "can not find the key to set rock value");
             return;            
         }
-        robj *val = dictGetVal(de);
-        serverAssert(val);
-        if (val->type != OBJ_STRING) {
+        if (ret == 2) {
             addReplyError(c, "key found, but type is not OBJ_STRING");
             return;
         }
-        if (!(val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)) {
+        if (ret == 3) {
             addReplyError(c, "key found but type is not OBJ_ENCODING_RAW or OBJ_ENCODING_EMBSTR");
             return;
         }
 
-        if (val == shared.keyRockVal) {
+        if (ret == 4) {
             addReplyError(c, "key found, but the value has already been shared.keyRockVal");
             return;
         }
-
-        dictSetVal(c->db->dict, de, shared.keyRockVal);
-        ++c->db->stat_key_str_rockval_cnt;
-        addRockWriteTaskOfString(c->db->id, key->ptr, val->ptr);
-        decrRefCount(val);
     
     } else if (strcasecmp(flag, "setziplist") == 0) {
         if (c->argc != 3) {
             addReplyError(c, "debugrock setziplist <key_name>");
+            return;
+        }
+
+        if (!c->name || !c->name->ptr || strcasecmp(c->name->ptr, "_debug_") != 0) {
+            addReplyError(c, "debugrock setziplist must be client with name _debug_");
             return;
         }
 
@@ -520,6 +540,14 @@ static void initRocksdb() {
     // We need to remove the whole RocksDB folder like rm -rf <rocksdb_folder>
     nftw(server.bunny_rockdb_path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
     serverLog(LL_NOTICE, "finish removal of the whole folder of %s", server.bunny_rockdb_path);
+    // mkdir 
+    mode_t mode = 0777;
+    if (mkdir(server.bunny_rockdb_path, mode)) {
+        int err = errno;
+        serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d, reason = %s", 
+                  server.bunny_rockdb_path, err, explain_errno_mkdir(err, server.bunny_rockdb_path, mode));
+        exit(1);
+    }
 
     long cpus = sysconf(_SC_NPROCESSORS_ONLN);
     rocksdb_options_t *options = rocksdb_options_create();
@@ -770,6 +798,18 @@ static void doReadTasksInReadThread(const size_t task_cnt, sds const* const task
         on_fly_vals[i] = vals[i];
     }
     unlockRockRead();
+
+    // for debug
+    if (server._debug_) {
+        for (size_t i = 0; i < task_cnt; ++i) {
+            sds val = vals[i];
+            if (sdslen(val) == 3 && val[0] == 'v' && val[1] == 'a' && val[2] == 'l') {
+                serverLog(LL_WARNING, "debug: sleep for value == val to sleep for 10 seconds");
+                usleep(10*1000*1000);
+                serverLog(LL_WARNING, "debug: sleep for value == val is over");
+            }
+        }
+    }
 
     // Do not forget to signal main thread to call rockReadSignalHandler()
     signalMainThreadByPipeInReadThread();

@@ -31,7 +31,7 @@ void initStreamPipeAndStartConsumer();
 void execVirtualCommand();
 int checkAndSetStreamWriting(client *c);
 void initKafkaProducer();
-void setVirtualContextFromConcreteClient(client *concrete);
+void setVirtualContextFromWillFreeConcreteClient(client *concrete);
 void try_to_execute_stream_commands();
 
 void lockConsumerData();

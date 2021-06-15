@@ -654,6 +654,7 @@ static void setVirtualClinetContextForNoTransactionFromConcrete(client *concrete
     int select_res = selectDb(v, concrete->db->id);
     serverAssert(select_res == C_OK);
 
+    serverAssert(concrete->argc > 0);
     v->argc = concrete->argc;
     v->argv = zmalloc(sizeof(robj*)*concrete->argc);
     for (int i = 0; i < concrete->argc; ++i) {
@@ -661,7 +662,10 @@ static void setVirtualClinetContextForNoTransactionFromConcrete(client *concrete
         v->argv[i] = o;
         incrRefCount(o);
     }
-    v->cmd = v->lastcmd = concrete->cmd;
+    // NOTE: concrete cmd may be not set, we need to lookup and set
+    struct redisCommand *cmd = lookupCommand(concrete->argv[0]->ptr);
+    serverAssert(cmd);
+    v->cmd = v->lastcmd = cmd;
 }
 
 static void setVirtualClinetContextForTransactionFromConcrete(client *concrete) {
@@ -684,8 +688,8 @@ static void setVirtualClinetContextForTransactionFromConcrete(client *concrete) 
     serverAssert(exec_obj->type == OBJ_STRING && strcasecmp(exec_obj->ptr, "exec") == 0);
     v->argv[0] = exec_obj;
     incrRefCount(exec_obj);
-    serverAssert(concrete->cmd->proc == execCommand && concrete->lastcmd->proc == execCommand);
-    v->cmd = v->lastcmd = concrete->cmd;
+    // NOTE: concrete->cmd may not be valid
+    v->cmd = v->lastcmd = lookupCommand(sds_exec);
    
     // mstate
     v->mstate.commands = zmalloc(sizeof(multiCmd) * concrete->mstate.count);
@@ -714,7 +718,12 @@ static void setVirtualClinetContextForTransactionFromConcrete(client *concrete) 
  * For stream phase, it is not necessary because all info can be constructed from stream message 
  * But for roch phase, it is essential because rock phasse with steam command execution
  * need an exection context which transfer from concrete client to virtual context */
-void setVirtualContextFromConcreteClient(client *concrete) {
+void setVirtualContextFromWillFreeConcreteClient(client *concrete) {
+    // it is for debug
+    if (server._debug_)
+        serverLog(LL_WARNING, "setVirtualContextFromConcreteClient(), call %s",
+                concrete->mstate.count == 0 ? "no tran" : "tran");
+
     serverAssert(concrete != server.virtual_client);
     serverAssert(server.streamCurrentClientId == concrete->id);
     // virtual_client right now is zero, i.e., not used by anyone
@@ -777,9 +786,16 @@ static void freeVirtualClientContext() {
  * right now for simplicity, we do not use cache
  * from networking.c processInlineBuffer() */
 void execVirtualCommand() {
-    /* Run the command */
+    /* Run the stream write command */
     serverAssert(lookupStreamCurrentClient() == server.virtual_client);
     serverAssert(server.virtual_client->rockKeyNumber == 0);
+
+    // debug
+    if (server._debug_) {
+        client *c = server.virtual_client;
+        serverLog(LL_WARNING, "argc = %d, argv[0] = %s", c->argc, (sds)c->argv[0]->ptr);
+        serverLog(LL_WARNING, "c->cmd = %s", c->cmd->name);
+    }
 
     if (!(server.virtual_client->flags & CLIENT_MULTI)) {
         int call_flags = CMD_CALL_SLOWLOG | CMD_CALL_STATS;
@@ -1361,6 +1377,16 @@ static client *processNoExecCommandForStreamWrite(uint8_t node_id, uint64_t clie
     }
     server.streamCurrentClientId = c->id;   // NOTE: could be concrete client id or vritual client id
 
+    // for debug
+    if (server._debug_) {
+        if (strcasecmp(command, "append") == 0) {
+            sds key = listNodeValue(listIndex(args, 0));
+            int ret = debug_set_string_key_rock(dbid, key);
+            if (ret == 0)
+                serverLog(LL_WARNING, "debug: evict string key %s to rock", key);
+        }
+    }
+
     if (c != server.virtual_client) {
         serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
         serverAssert(strcasecmp(c->argv[0]->ptr, command) == 0);
@@ -1404,6 +1430,26 @@ static client* processExecCommandForStreamWrite(uint8_t node_id, uint64_t client
         if (de) c = dictGetVal(de);     // found the concrete client
     }
     server.streamCurrentClientId = c->id;   // NOTE: could be concrete client id or vritual client id
+
+    // for debug
+    if (server._debug_) {
+        listIter li;
+        listNode *ln;
+        listRewind(cmds, &li);
+        int index = 0;
+        while ((ln = listNext(&li))) {
+            sds cmd = listNodeValue(ln);
+            if (strcasecmp(cmd, "append") == 0) {
+                list *append_args = listNodeValue(listIndex(args, index));
+                serverAssert(append_args);
+                sds key = listNodeValue(listIndex(append_args, 0));
+                int ret = debug_set_string_key_rock(dbid, key);
+                if (ret == 0)
+                    serverLog(LL_WARNING, "debug: evict string key %s to rock", key);
+            }
+            ++index;
+        }
+    }
 
     if (c != server.virtual_client) {
         serverAssert(c->streamWriting == STREAM_WRITE_WAITING);
@@ -1570,9 +1616,15 @@ static void addRcvMsgInConsumerThread(size_t len, void *payload) {
  *             1. lo <= hi
  *             2. lo <= hi and lo >= 0 */
 static void get_offset_range(rd_kafka_t *rk, int64_t *lo, int64_t *hi) {
-    rd_kafka_resp_err_t err = rd_kafka_query_watermark_offsets(rk, bunnyRedisTopic, 0, lo, hi, 2000);
+    int max_try_times = 3;
+    rd_kafka_resp_err_t err;
+    for (int i = 0; i < max_try_times; ++i) {
+        err = rd_kafka_query_watermark_offsets(rk, bunnyRedisTopic, 0, lo, hi, 2000);
+        if (err == RD_KAFKA_RESP_ERR_NO_ERROR) break;
+        usleep(500*1000);   // sleep for 500 ms
+    }
     if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
-        serverLog(LL_WARNING, "get_offset_range() failed, err = %s", rd_kafka_err2str(err));
+        serverLog(LL_WARNING, "get_offset_range() failed, err = %s.", rd_kafka_err2str(err));
         exit(1);
     }
     serverAssert(*lo >= 0 && *lo <= *hi);
@@ -1609,7 +1661,7 @@ static void* entryInConsumerThread(void *arg) {
     // we can not retrieve message which is out of range
     if (rd_kafka_conf_set(conf, "auto.offset.reset", "error", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() auto.offset.reset, reason = %s", errstr);
-    if (rd_kafka_conf_set(conf, "enable.auto.commit", "true", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+    if (rd_kafka_conf_set(conf, "enable.auto.commit", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() enable.auto.commit, reason = %s", errstr);
     
     rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
@@ -1628,8 +1680,9 @@ static void* entryInConsumerThread(void *arg) {
     
     int64_t lo_offset, hi_offset;
     get_offset_range(rk, &lo_offset, &hi_offset); 
+    int64_t total_resume_cnt = hi_offset-lo_offset;
     serverLog(LL_NOTICE, "Kafka log offset range is [%ld, %ld), total need resume = %ld", 
-              lo_offset, hi_offset, hi_offset-lo_offset);
+              lo_offset, hi_offset, total_resume_cnt);
     check_or_set_offset(lo_offset);
 
     rd_kafka_topic_partition_list_destroy(partition_list);
@@ -1693,9 +1746,10 @@ static void* entryInConsumerThread(void *arg) {
         } else {
             // report progress of startup
             int64_t processed_cnt = cur_offset - lo_offset + 1;
-            if (processed_cnt % 10000 == 0) {
-                serverLog(LL_NOTICE, "consumer thread is resuming Kafka log, processed count = %ld, ms = %lu",
-                          processed_cnt, elapsedMs(startupCheckTimer));
+            int percentage = (int)(processed_cnt * 100 / total_resume_cnt);
+            if (processed_cnt % 50000 == 0) {
+                serverLog(LL_NOTICE, "consumer thread is resuming Kafka log, processed count = %ld(%d%%), latency = %lu(ms)",
+                          processed_cnt, percentage, elapsedMs(startupCheckTimer));
                 elapsedStart(&startupCheckTimer);
             }
         }

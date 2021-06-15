@@ -3074,9 +3074,9 @@ void adjustOpenFilesLimit(void) {
     struct rlimit limit;
 
     if (getrlimit(RLIMIT_NOFILE,&limit) == -1) {
-        serverLog(LL_WARNING,"Unable to obtain the current NOFILE limit (%s), assuming 1024 and setting the max clients configuration accordingly.",
+        serverLog(LL_WARNING,"Unable to obtain the current NOFILE limit (%s), assuming 10240 and setting the max clients configuration accordingly.",
             strerror(errno));
-        server.maxclients = 1024-CONFIG_MIN_RESERVED_FDS;
+        server.maxclients = 10240-CONFIG_MIN_RESERVED_FDS;
     } else {
         rlim_t oldlimit = limit.rlim_cur;
 
@@ -3557,7 +3557,7 @@ void initServer(void) {
     }
     uint8_t node_id = init_zk_and_get_node_id(server.zk_server);
     serverAssert(node_id != CONSUMER_STARTUP_NODE_ID);
-    serverLog(LL_NOTICE, "init_zk_and_get_node_id() return node_id = %d", node_id);
+    serverLog(LL_NOTICE, "Zookeeper assigns me node id = %d", node_id);
     server.node_id = CONSUMER_STARTUP_NODE_ID;
     server.saved_node_id_in_consumer_startup = node_id;
     atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_START); 
@@ -3567,7 +3567,13 @@ void initServer(void) {
     /* stream write consumer init */
     initStreamPipeAndStartConsumer();
 
-    /* rock write lock and thread init */
+    /* rock write lock and thread init. */
+    sds rocksdb_path = sdsnew(server.bunny_rocksdb_parent);
+    rocksdb_path = sdscatlen(rocksdb_path, "/", 1);
+    char to_int_str_buf[4];
+    sprintf(to_int_str_buf, "%d", node_id);
+    rocksdb_path = sdscatlen(rocksdb_path, to_int_str_buf, strlen(to_int_str_buf));
+    server.bunny_rockdb_path = rocksdb_path;
     initRockWrite();
     /* rock read lock and thred init */
     initRockPipeAndRockRead();
@@ -3580,6 +3586,8 @@ void initServer(void) {
     // server.evict_hash_candidates = dictCreate(&evictHashCandidatesDictType,NULL);
     memset(server.evic_hash_candidates, 0, sizeof(evictHash)*EVICT_HASH_CANDIDATES_MAX_SIZE);
 
+    // set debug for disable
+    server._debug_ = 0;
 }
 
 /* Some steps in server initialization need to be done last (after modules

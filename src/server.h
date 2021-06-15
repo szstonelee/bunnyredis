@@ -126,7 +126,8 @@ typedef long long ustime_t; /* microsecond time type. */
 #define NET_ADDR_STR_LEN (NET_IP_STR_LEN+32) /* Must be enough for ip:port */
 #define NET_HOST_PORT_STR_LEN (NET_HOST_STR_LEN+32) /* Must be enough for hostname:port */
 #define CONFIG_BINDADDR_MAX 16
-#define CONFIG_MIN_RESERVED_FDS 32
+// #define CONFIG_MIN_RESERVED_FDS 32
+#define CONFIG_MIN_RESERVED_FDS 4196  /* because RocksDB need more file descriptions, we need a big number */
 #define CONFIG_DEFAULT_PROC_TITLE_TEMPLATE "{title} {listen-addr} {server-mode}"
 
 #define ACTIVE_EXPIRE_CYCLE_SLOW 0
@@ -1379,7 +1380,8 @@ struct redisServer {
     int aof_state;                  /* AOF_(ON|OFF|WAIT_REWRITE) */
     int aof_fsync;                  /* Kind of fsync() policy */
     char *aof_filename;             /* Name of the AOF file */
-    char *bunny_rockdb_path;        /* folder path for RocksDB */
+    char *bunny_rocksdb_parent;     /* parent folder for RocksDB */
+    char *bunny_rockdb_path;        /* real path for RocksDB */
     char *zk_server;                /* zookeeper bootstrap server */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
     int aof_rewrite_perc;           /* Rewrite AOF if % growth is > M and... */
@@ -1690,6 +1692,9 @@ struct redisServer {
 
     // indicating whether support kafka compaction
     int kafka_compcation;
+
+    // use for debug
+    int _debug_;
 };
 
 client* lookupStreamCurrentClient();
