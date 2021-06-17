@@ -169,7 +169,7 @@ static void debugReportMemAndKey() {
         if (key_cnt) {
             redisDb *db = server.db+i;
             serverLog(LL_WARNING, 
-                      "dbid = %d, key_cnt = %d, has_cnt = %d, pure_hash_cnt = %d", 
+                      "dbid = %d, key_cnt = %d, hash_cnt = %d, pure_hash_cnt = %d", 
                       i, key_cnt, hash_cnt, pure_hash_cnt);
             serverLog(LL_WARNING, "       str cnt(really) = %d, str of raw or embed(really) = %d, stat of str = %lld", str_cnt, str_raw_emb_cnt, db->stat_key_str_cnt);
             serverLog(LL_WARNING, "       str rock cnt(really) = %d, stat of str rock = %lld", str_rock_cnt, db->stat_key_str_rockval_cnt);
@@ -579,17 +579,16 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree)
                              valobj->refcount != OBJ_SHARED_REFCOUNT);
                 dictSetVal(dict, de, shared.keyRockVal);
                 ++db->stat_key_str_rockval_cnt;
-                addRockWriteTaskOfString(bestdbid, bestkey, valobj->ptr);
-                decrRefCount(valobj);
+                addRockWriteTaskOfString(bestdbid, bestkey, valobj->ptr);                
             } else {
                 serverAssert(valobj->type == OBJ_HASH && valobj->encoding == OBJ_ENCODING_ZIPLIST && 
                              valobj->refcount != OBJ_SHARED_REFCOUNT);
                 dictSetVal(dict, de, shared.ziplistRockVal);
                 ++db->stat_key_ziplist_rockval_cnt;
                 unsigned char *zl = valobj->ptr;
-                addRockWriteTaskOfZiplist(bestdbid, bestkey, zl);
+                addRockWriteTaskOfZiplist(bestdbid, bestkey, zl);                
             }
-            // decrRefCount(valobj);
+            decrRefCount(valobj);
             delta -= (long long) zmalloc_used_memory();
             mem_freed += delta;
             keys_freed++;
