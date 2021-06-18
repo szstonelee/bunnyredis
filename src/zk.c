@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <linux/if_link.h>
+#include <jansson.h>
 
 
 #define BUNNY_ZK_ROOT_NODE "/bunnyredis"
@@ -142,7 +143,7 @@ static void verify_found_node_id(uint8_t node_id, char *my_ip_port) {
 
     if (memcmp(buffer, my_ip_port, buf_len) != 0) {
         sds real_read = sdsnewlen(buffer, buf_len);
-        serverLog(LL_WARNING, "verify_found_node_id() memcpy failed, node_id = %d, ip_port = %s, buffer = %s", 
+        serverLog(LL_WARNING, "verify_found_node_id() memcmp failed, node_id = %d, ip_port = %s, buffer = %s", 
                   node_id, my_ip_port, real_read);
         exit(1);
     }
@@ -197,6 +198,7 @@ static void get_ip_addresss(char *ip, size_t ip_max_len) {
     }
 }
 
+
 static int is_compact_cleanup_policy() {
     char *stream_write_znode = "/config/topics/redisStreamWrite";
     int buf_len = sizeof(buffer);
@@ -207,38 +209,50 @@ static int is_compact_cleanup_policy() {
             exit(1);
         }
         return 0;       // not found, default cleanup policy is "delete", so return false
+    } 
+    
+    json_error_t err;
+    json_t *root = json_loadb(buffer, buf_len, 0, &err);
+    if (!root || json_typeof(root) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "is_compact_cleanup_policy() root not Json or root not an object Json!");
+        exit(1);
+    }
+    json_t *config = json_object_get(root, "config");
+    if (!config || json_typeof(config) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "is_compact_cleanup_policy() config not get or config not an object Json");
+        exit(1);
+    }
+
+    json_t *cleanup_policy = json_object_get(config, "cleanup.policy");
+    if (!cleanup_policy) {
+        // not found, it is OK, default is delete policy
+        return 0;
+    }
+    if (json_typeof(cleanup_policy) != JSON_STRING) {
+        serverLog(LL_WARNING, "is_compact_cleanup_policy() cleanup.policy is not a string Json");
+        exit(1);
+    }
+
+    const char *policy_name = json_string_value(cleanup_policy);
+    if (strcasecmp(policy_name, "delete") == 0) {
+        json_decref(root);
+        return 0;
+    } else if (strcasecmp(policy_name, "compact") == 0) {
+        json_decref(root);
+        return 0;
     } else {
-        char *search = "\"cleanup.policy\":\"";
-        char *start = strstr(buffer, search);
-        if (start == NULL)
-            return 0;       // not found in buffer
-        start += strlen(search);
-        char *end = strstr(start, "\"");
-        if (end == NULL) {
-            serverLog(LL_WARNING, "is_compact_cleanup_policy() faield for search the second quote char!");
-            exit(1);
-        }
-
-        sds cleanup_policy = sdsnewlen(start, end-start);
-        if (strcmp(cleanup_policy, "delete,compact") == 0 ||
-            strcmp(cleanup_policy, "compact,delete") == 0) {
-            serverLog(LL_WARNING, "Kafka cleanup.policy combine delete and compact, it is not recommended!");
-            exit(1);
-        }
-
-        if (strcmp(cleanup_policy, "compact") == 0) {
-            sdsfree(cleanup_policy);
-            return 1;
-        } else {
-            serverAssert(strcmp(cleanup_policy, "delete") == 0);
-            sdsfree(cleanup_policy);
-            return 0;
-        }
+        serverLog(LL_WARNING, "cleanup.policy is wrong with value = %s! either delete or compact. We forbid delete and compact",
+                  policy_name);
+        exit(1);
     }
 }
 
+
 # define MAX_IP4_LEN    15  // max ip4 is 255.255.255.255    
 uint8_t init_zk_and_get_node_id() {
+    // NOTE: we use different free or malloc
+    json_set_alloc_funcs(zmalloc, zfree);
+
     char ip[MAX_IP4_LEN+1];
     get_ip_addresss(ip, MAX_IP4_LEN);
     serverLog(LL_NOTICE, "ip addresss = %s", ip);
@@ -372,41 +386,35 @@ void check_or_set_offset(int64_t offset) {
 
 /* use cli_mt to get /brokers/ids/0 for the data format in read */
 static sds parse_endpoint(sds read) {
-    char *p;
-
-    char *host_search = "\"host\":\"";
-    p = strstr(read, host_search);
-    if (!p) {
-        serverLog(LL_WARNING, "parse_end_point() failed for host search, read = %ss", read);
+    json_error_t err;
+    json_t *root = json_loads(read, 0, &err);
+    if (!root || json_typeof(root) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "parse_endpoint() load read as json failed! read = %s", read);
         exit(1);
     }
-    p += strlen(host_search);
-    sds host = sdsempty();
-    while (*p != 0 && *p != '\"') {
-        host = sdscatlen(host, p, 1);
-        ++p;
-    }
 
-    char *port_search = "\"port\":";
-    p = strstr(read, port_search);
-    if (!p) {
-        serverLog(LL_WARNING, "parse_end_point() failed for port search, read = %ss", read);
+    json_t *host = json_object_get(root, "host");
+    if (!host || json_typeof(host) != JSON_STRING) {
+        serverLog(LL_WARNING, "parse_endpoint() host failed! read = %s", read);
         exit(1);
     }
-    p += strlen(port_search);
-    sds port = sdsempty();
-    while (*p != 0 && isdigit(*p)) {
-        port = sdscatlen(port, p, 1);
-        ++p;
-    }
+    const char *host_str = json_string_value(host);
 
-    serverAssert(sdslen(host) && sdslen(port));
-    sds endpoint = sdsdup(host);
-    endpoint = sdscatlen(endpoint, ":", 1);
-    endpoint = sdscatlen(endpoint, port, sdslen(port));
-    sdsfree(host);
-    sdsfree(port);
-    return endpoint;
+    json_t *port = json_object_get(root, "port");
+    if (!port || json_typeof(port) != JSON_INTEGER) {
+        serverLog(LL_WARNING, "parse_endpoint() port failed! read = %s", read);
+        exit(1);
+    }
+    json_int_t port_val = json_integer_value(port);
+    
+    sds res = sdsnewlen(host_str, strlen(host_str));
+    res = sdscatlen(res, ":", 1);
+    sds port_str = sdsfromlonglong((long long)port_val);
+    res = sdscatlen(res, port_str, strlen(port_str));
+    sdsfree(port_str);
+    
+    json_decref(root);
+    return res;
 }
 
 sds get_kafka_broker() {
@@ -448,4 +456,97 @@ sds get_kafka_broker() {
 
     serverLog(LL_WARNING, "get_kafka_broker() can not get Kafka broker");
     exit(1);
+}
+
+void set_max_message_bytes(long long set_val) {
+    serverAssert(set_val > 0);
+
+    zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
+    if (!zh) {
+        serverLog(LL_WARNING, "set_max_message_bytes() failed, zk_server = %s, errno = %d\n", 
+                  server.zk_server, errno);
+        exit(1);
+    } 
+
+    char *stream_write_znode = "/config/topics/redisStreamWrite";
+
+    int buf_len = sizeof(buffer);
+    int rc;
+    
+    rc = zoo_get(zh, stream_write_znode, 0, buffer, &buf_len, &stat);
+    if (rc || buf_len == -1) {
+        serverLog(LL_WARNING, "set_max_message_bytes() failed for zoo_get, znode = %s, zk_server = %s, rc = %d, buf_len = %d", 
+                  stream_write_znode, server.zk_server, rc, buf_len);
+        exit(1);
+    }
+
+    json_error_t err;
+    json_t *root = json_loadb(buffer, buf_len, 0, &err);
+    if (!root || json_typeof(root) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "set_max_message_bytes() failed for root json, buffer = %s", buffer);
+        exit(1);
+    }
+
+    json_t *config = json_object_get(root, "config");
+    if (!config || json_typeof(config) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "set_max_message_bytes() failed for config json, buffer = %s", buffer);
+        exit(1);
+    }
+
+    json_t *max_message_bytes = json_object_get(config, "max.message.bytes");
+    if (max_message_bytes) {
+        if (json_typeof(max_message_bytes) != JSON_STRING) {
+            serverLog(LL_WARNING, "set_max_message_bytes() failed for max_message_bytes json, buffer = %s", buffer);
+            exit(1);
+        }
+        const char *max_message_bytes_str = json_string_value(max_message_bytes);
+        long long saved = strtoll(max_message_bytes_str, NULL, 10);
+        if (saved == 0 && errno == EINVAL) {
+            serverLog(LL_WARNING, "set_max_message_bytes() failed for strtoll, buffer = %s", buffer);
+            exit(1);
+        }
+
+        if (saved >= set_val)
+            return;     // check succesfully
+        
+        // otherwise, we need to increase max.message.bytes
+        sds set_val_str = sdsfromlonglong(set_val);
+        int ret = json_string_set(max_message_bytes, set_val_str);
+        if (ret != 0) {
+            serverLog(LL_WARNING, "set_max_message_bytes() failed for json_string_set, set_val_str = %s", set_val_str);
+            exit(1);
+        }
+        sdsfree(set_val_str);
+
+    } else {
+        // not found, it is OK to create and set
+        sds set_val_str = sdsfromlonglong(set_val);
+        json_t *max_message_bytes = json_string(set_val_str);
+        if (!max_message_bytes) {
+            serverLog(LL_WARNING, "set_max_message_bytes() failed for json_string, set_val_str = %s", set_val_str);
+            exit(1);
+        }
+        int ret = json_object_set(config, "max.message.bytes", max_message_bytes);
+        if (ret != 0) {
+            serverLog(LL_WARNING, "set_max_message_bytes() failed for json_object_set for max_message_bytes");
+            exit(1);
+        }
+        sdsfree(set_val_str);
+    }
+
+    char* marshall_for_root = json_dumps(root, JSON_COMPACT);
+    if (!marshall_for_root) {
+        serverLog(LL_WARNING, "set_max_message_bytes() failed for json_dumps!");
+        exit(1);
+    }
+
+    rc = zoo_set(zh, stream_write_znode, marshall_for_root, strlen(marshall_for_root), -1);
+    if (rc) {
+        serverLog(LL_WARNING, "set_max_message_bytes() failed for zoo_set! stream_write_znode = %s, marshall_for_root = %s, rc = %d",
+                  stream_write_znode, marshall_for_root, rc);
+        exit(1);
+    }
+
+    zfree(marshall_for_root);
+    zookeeper_close(zh);
 }

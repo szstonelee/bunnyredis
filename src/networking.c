@@ -2181,8 +2181,8 @@ void processInputBuffer(client *c) {
                 int evict_res = performeKeyOrHashEvictions(0, 0);
                 if (server.bunny_deny) {
                     if (evict_res == EVICT_ROCK_TIMEOUT || evict_res == EVICT_ROCK_NOT_READY) {
-                        serverLog(LL_WARNING, "memory is low because %s. Memory used = %lu, memory limit = %llu, reject cmd = %s", 
-                                  (evict_res == EVICT_ROCK_NOT_READY ? "too many keys in RocksDB" : "not quick to free enough memory"),
+                        serverLog(LL_WARNING, "memory is over limit because %s. Memory used = %lu, memory limit = %llu, reject cmd = %s", 
+                                  (evict_res == EVICT_ROCK_NOT_READY ? "too many data set in RocksDB" : "not quick to free enough memory"),
                                   zmalloc_used_memory(), server.bunnymem, (sds)c->argv[0]->ptr);
                         rejectCommandFormat(c, "BunnyRedis memory is over limit. '%s' command maybe consume memory, so it is forbidden temporarily for now. Please use other commands to free memory and try it again.", 
                                             c->argv[0]->ptr);
@@ -2221,6 +2221,7 @@ void processInputBuffer(client *c) {
                 break;
             case STREAM_CHECK_ACL_FAIL:
             case STREAM_CHECK_FORBIDDEN:
+            case STREAM_CHECK_MSG_OVERFLOW:
                 commandProcessed(c);
                 break;
             default:

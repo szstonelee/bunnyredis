@@ -11,18 +11,21 @@ bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --delete --group 
 bin/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list localhost:9092 --topic redisStreamWrite --time -1
 ```
 
-set retention and cleanup policy
+set retention and cleanup policy (1M = 1048576)
 ```
 bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config retention.ms=-1
 bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config retention.bytes=10485760
 bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config cleanup.policy=compact
 
-
 NOTE: retention.check.interval.ms and log.cleaner.enable log.segment.bytes are from file config/server.properties
 
 bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --topic redisStreamWrite --describe
 ```
-1M = 1048576
+
+set topic max.message.bytes (e.g. 128M)
+```
+bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config max.message.bytes=134217728
+```
 
 ```
  for i in {1..1000}; do sleep 1; redis-cli& sleep 1; pkill -9 redis-cli;  done

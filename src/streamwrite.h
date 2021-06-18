@@ -15,10 +15,12 @@
 #define STREAM_CHECK_ACL_FAIL             4     // failed by ACL check, just return
 #define STREAM_CHECK_EMPTY_TRAN           5     // transaction is empty executution
 #define STREAM_CHECK_FORBIDDEN            6     // forbidden by BunnyRedis
+#define STREAM_CHECK_MSG_OVERFLOW         7     // the size of command with args is too large 
 
 #define CONSUMER_STARTUP_START            0
 #define CONSUMER_STARTUP_FINISH           1
 #define CONSUMER_STARTUP_OPEN_TO_CLIENTS  2
+
 
 // API from t_string.c
 int parseExtendedStringArgumentsWithoutReply(client *c, int *flags, int *unit, robj **expire, int command_type);

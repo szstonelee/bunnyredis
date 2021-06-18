@@ -3557,7 +3557,7 @@ void initServer(void) {
     }
     uint8_t node_id = init_zk_and_get_node_id(server.zk_server);
     serverAssert(node_id != CONSUMER_STARTUP_NODE_ID);
-    serverLog(LL_NOTICE, "Zookeeper assigns me node id = %d", node_id);
+    serverLog(LL_NOTICE, "Zookeeper allocated node id = %d", node_id);
     server.node_id = CONSUMER_STARTUP_NODE_ID;
     server.saved_node_id_in_consumer_startup = node_id;
     atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_START); 

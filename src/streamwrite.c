@@ -10,6 +10,7 @@
 #include <uuid/uuid.h>
 
 
+
 // spin lock only run in Linux
 static pthread_spinlock_t consumerLock;     
 static pthread_spinlock_t producerLock;
@@ -20,6 +21,8 @@ static pthread_spinlock_t producerLock;
 #define START_OFFSET        0       // consumer start offset to read
 
 #define RCV_MSGS_TOO_LONG   1000    // if we recevice to much messages and not quick to consume, it just warns
+
+#define MARSHALL_SIZE_OVERFLOW (128<<20)    // the max messsage size (NOTE: approbally)
 
 static int kafkaReadyAndTopicCorrect = 0;   // producer startup check kafka state and main thread wait it for correctness
 redisAtomic int kafkaStartupConsumeFinish;   // when startup, finish all consume data, then unpause all clients to start working
@@ -86,6 +89,21 @@ static sds marshall_for_no_exec(client *c) {
     return buf;
 }
 
+/* before send, we need check the message size. 
+ * Only need check agument because command name and other argument is small */
+static int is_overflow_before_marshall_no_exec(client *c) {
+    size_t total = 0;
+    for (int i = 1; i < c->argc; ++i) {
+        total += sdslen(c->argv[i]->ptr);
+    }
+
+    if (total > MARSHALL_SIZE_OVERFLOW)
+        serverLog(LL_WARNING, "is_overflow_before_marshall_no_exec() found the command %s, too large with size = %ld",
+                  (sds)c->argv[0]->ptr, total);
+
+    return total > MARSHALL_SIZE_OVERFLOW;
+}
+
 // referece multi.c execCommand()
 static sds marshall_for_exec(client *c) {
     serverAssert(strcasecmp(c->argv[0]->ptr, "exec") == 0);
@@ -129,6 +147,24 @@ static sds marshall_for_exec(client *c) {
     }
 
     return buf;
+}
+
+/* before send, we need check the message size 
+ * Only need check agument because command name and other argument is small */
+static int is_overflow_before_marshall_exec(client *c) {
+    size_t total = 0;
+    for (int i = 0; i < c->mstate.count; ++i) {
+        for (int j = 1; j < c->mstate.commands[i].argc; ++j) {
+            robj *each_arg = c->mstate.commands[i].argv[j];
+            total += sdslen(each_arg->ptr);
+        }
+    }
+
+    if (total > MARSHALL_SIZE_OVERFLOW)
+        serverLog(LL_WARNING, "is_overflow_before_marshall_exec() found the command %s, too large with size = %ld",
+                  "multi transaction", total);
+
+    return total > MARSHALL_SIZE_OVERFLOW;
 }
 
 /* Main thread call this to add command to sndMsgs 
@@ -525,6 +561,18 @@ int checkAndSetStreamWriting(client *c) {
     }
     
     if (cmd->streamCmdCategory == STREAM_ENABLED_CMD) {
+        // before setting STREAM_WRITE state， we need to check whether the message size is overflow
+        int is_overflow = 0;
+        if (c->flags & CLIENT_MULTI) {
+            is_overflow = is_overflow_before_marshall_exec(c);
+        } else {
+            is_overflow = is_overflow_before_marshall_no_exec(c);
+        }
+        if (is_overflow) {
+            rejectCommandFormat(c, "command with arguments is too large!");
+            return STREAM_CHECK_MSG_OVERFLOW;
+        }
+
         // we set STREAM_WRITE_WAITING for the concrete caller
         c->streamWriting = STREAM_WRITE_WAITING;    
         // add command info as message to sndMsgs which will trigger stream write
@@ -1206,6 +1254,8 @@ static void sendKafkaMsgInProducerThread(sds msg, rd_kafka_t *rk, rd_kafka_topic
             break;      // retry
         default:
             // stop error
+            if (strcmp(rd_kafka_err2name(rd_kafka_last_error()), "MSG_SIZE_TOO_LARGE") == 0)
+                serverLog(LL_WARNING, "producer found MSG_SIZE_TOO_LARGE, msg size = %ld", sdslen(msg));
             serverPanic("sendKafkaMsgInProducerThread() fatel error, errono = %d, reason = %s",
                         errno, rd_kafka_err2name(rd_kafka_last_error()));
         }
@@ -1259,10 +1309,13 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "enable.idempotence", "true",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() enable.idempotence, reason = %s", errstr);
-    // set broker message size (to 100_000_000)
-    if (rd_kafka_conf_set(conf, "message.max.bytes", "100000000",
+    // se producer message.max.bytes
+    sds max_bytes_for_producer = sdsfromlonglong(MARSHALL_SIZE_OVERFLOW + (long long)(10<<20));
+    if (rd_kafka_conf_set(conf, "message.max.bytes", max_bytes_for_producer,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.max.bytes, reason = %s", errstr);
+    sdsfree(max_bytes_for_producer);
+
     rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
     rd_kafka_conf_set_error_cb(conf, error_cb);
     rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
@@ -1663,6 +1716,10 @@ static void* entryInConsumerThread(void *arg) {
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() auto.offset.reset, reason = %s", errstr);
     if (rd_kafka_conf_set(conf, "enable.auto.commit", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() enable.auto.commit, reason = %s", errstr);
+    sds val_of_rcv_max_bytes = sdsfromlonglong(MARSHALL_SIZE_OVERFLOW*2);
+    if (rd_kafka_conf_set(conf, "receive.message.max.bytes", val_of_rcv_max_bytes, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() receive.message.max.bytes, reason = %s", errstr);
+    sdsfree(val_of_rcv_max_bytes);
     
     rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
     if (!rk)
@@ -1686,6 +1743,9 @@ static void* entryInConsumerThread(void *arg) {
     check_or_set_offset(lo_offset);
 
     rd_kafka_topic_partition_list_destroy(partition_list);
+
+    // then set broker max.message.bytes
+    set_max_message_bytes(2 * MARSHALL_SIZE_OVERFLOW);
 
     // loop for Kafka messages
     monotime startupCheckTimer = 0;

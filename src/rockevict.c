@@ -786,7 +786,7 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
     return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;
 }
 
-/* We have two choice of eviction, key (include hash with ziplist) or hash. We try randomly to use one. 
+/* We have two choice of eviction, key (include hash with ziplist) or pure hash. We try randomly to use one. 
  * If one is successfully, then the next 8 times will try to use it again. 
  * RETURN is EVICT_ROCK_ENOUGH_MEM, EVICT_ROCK_NOT_READY, EVICT_ROCK_FREE or EVICT_ROCK_TIMEOUT */
 #define CONTINUOUS_EVICT_MAX 8
@@ -911,7 +911,9 @@ void cronEvictToMakeRoom() {
         ++over_pencentage_cnt;
         over_pencentage_cnt = over_pencentage_cnt % 128;        // if Hz 50, so 2 seconds report once
         if (over_pencentage_cnt == 0)
-            serverLog(LL_WARNING, "memory is over limit, but no more key or hash can be freed!");
+            serverLog(LL_WARNING, "memory is over limit. I have evicted something, but need do more in future...");
+    } else if (res == EVICT_ROCK_NOT_READY) {
+        serverLog(LL_WARNING, "memory is over limit and high percentage of dataset in Rock already. I can not do more in future!");
     }
 }
 
