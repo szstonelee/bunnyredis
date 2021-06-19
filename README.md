@@ -1,4 +1,12 @@
+ycsb
+```
+./bin/ycsb load redis -P  workloads/workloadb -p redis.host=localhost -p redis.port=8888
+./bin/ycsb load redis -P  workloads/workloadb -p redis.host=localhost -p redis.port=8888 -p recordcount=10 -p fieldlength=1000 -p fieldcount=10000
+```
+
 Kafka FAQ: https://cwiki.apache.org/confluence/display/KAFKA/FAQ#FAQ-ShouldIchoosemultiplegroupidsorasingleonefortheconsumers?
+
+hub.fastgit.org
 
 ```
 1. list all consumer groups
@@ -32,11 +40,6 @@ bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite 
  for i in {1..1000}; do sleep 0.2; redis-cli& sleep 0.5; pkill -9 redis-cli;  done
 ```
 
-测试注意：
-```
-r-server --port 8888 --bind 0.0.0.0 --save "" --appendonly no
-对于BunnyRedis，请清空channel
-```
 
 NOTE: Linux下，需要设置足够大的open files limit，否则，RocksDB产生很多文件，可能导致crash，方法如下：
 ```
@@ -53,14 +56,16 @@ ulimit -n
 ```
 
 ```
-./bunny-redis ./redis.conf --nodeid 1
-./bunny-redis ./redis.conf --nodeid 2 --port 6380 
+cd src
+./bunny-redis ../redis.conf --zk 127.0.0.1:2181
+./bunny-redis ../redis.conf --zk 127.0.0.1:2181 --port 6380 
  # check how many files open for a user
 lsof -u root | wc -l
 
 if run compaction test (set kafka first)
-./bunny-redis ./redis.conf --nodeid 1 --kafkaCompact yes
-./bunny-redis ./redis.conf --nodeid 2 --port 6380 --kafkaCompact yes
+./bunny-redis ../redis.conf --nodeid 1 --kafkaCompact yes
+./bunny-redis ../redis.conf --nodeid 2 --port 6380 --kafkaCompact yes
+r-server --port 8888 --bind 0.0.0.0 --save "" --appendonly no
 ```
 
 Redis memory: add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect
@@ -71,6 +76,11 @@ NOTE: when start bunny-redis use --nodeid=<distinct node id> or clear the topic 
 
 tool
 ```
+# connect ZooKeeper
+# 1. from zookeeper C library (limitation: create can not have data)
+cli_mt localhost:2181
+# 2. from Zookeepeer source (mvn -Dmaven.test.skip package), no limitation
+bin/zkCli.sh
 # List topics
 ./bin/kafka-topics.sh --list --zookeeper localhost:2181
 # List offsets:

@@ -535,18 +535,33 @@ static int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, str
     return rv;
 }
 
+static void rek_mkdir(char *path) {
+    char *sep = strrchr(path, '/');
+    if(sep != NULL) {
+        *sep = 0;
+        rek_mkdir(path);
+        *sep = '/';
+    }
+    if(sep != NULL && mkdir(path, 0777) && errno != EEXIST)
+        serverLog(LL_WARNING, "error while trying to create folder = %s", path); 
+}
+
 static void initRocksdb() {
-    serverLog(LL_NOTICE, "start to delete old RocksDB folder in %s ...", server.bunny_rockdb_path);
+    serverLog(LL_NOTICE, "start to delete old RocksDB folder = %s ...", server.bunny_rockdb_path);
     // We need to remove the whole RocksDB folder like rm -rf <rocksdb_folder>
     nftw(server.bunny_rockdb_path, unlink_cb, 64, FTW_DEPTH | FTW_PHYS);
-    serverLog(LL_NOTICE, "finish removal of the whole folder of %s", server.bunny_rockdb_path);
+    serverLog(LL_NOTICE, "finish removal of the whole folder = %s", server.bunny_rockdb_path);
     // mkdir 
     mode_t mode = 0777;
     if (mkdir(server.bunny_rockdb_path, mode)) {
-        int err = errno;
-        serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d, reason = %s", 
-                  server.bunny_rockdb_path, err, explain_errno_mkdir(err, server.bunny_rockdb_path, mode));
-        exit(1);
+        if (errno == ENOENT) {
+            // folder not exist
+            rek_mkdir(server.bunny_rockdb_path);
+        } else {
+            serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d, reason = %s", 
+                      server.bunny_rockdb_path, errno, explain_errno_mkdir(errno, server.bunny_rockdb_path, mode));
+            exit(1);
+        }
     }
 
     long cpus = sysconf(_SC_NPROCESSORS_ONLN);

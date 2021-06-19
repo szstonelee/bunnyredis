@@ -22,7 +22,7 @@ static pthread_spinlock_t producerLock;
 
 #define RCV_MSGS_TOO_LONG   1000    // if we recevice to much messages and not quick to consume, it just warns
 
-#define MARSHALL_SIZE_OVERFLOW (128<<20)    // the max messsage size (NOTE: approbally)
+#define MARSHALL_SIZE_OVERFLOW (64<<20)    // the max messsage size (NOTE: approbally)
 
 static int kafkaReadyAndTopicCorrect = 0;   // producer startup check kafka state and main thread wait it for correctness
 redisAtomic int kafkaStartupConsumeFinish;   // when startup, finish all consume data, then unpause all clients to start working
@@ -1309,12 +1309,12 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "enable.idempotence", "true",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() enable.idempotence, reason = %s", errstr);
-    // se producer message.max.bytes
-    sds max_bytes_for_producer = sdsfromlonglong(MARSHALL_SIZE_OVERFLOW + (long long)(10<<20));
-    if (rd_kafka_conf_set(conf, "message.max.bytes", max_bytes_for_producer,
+    // message.max.bytes (for the broker)
+    sds message_max_bytess = sdsfromlonglong(2 * MARSHALL_SIZE_OVERFLOW);
+    if (rd_kafka_conf_set(conf, "message.max.bytes", message_max_bytess,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.max.bytes, reason = %s", errstr);
-    sdsfree(max_bytes_for_producer);
+    sdsfree(message_max_bytess);
 
     rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
     rd_kafka_conf_set_error_cb(conf, error_cb);
@@ -1716,14 +1716,20 @@ static void* entryInConsumerThread(void *arg) {
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() auto.offset.reset, reason = %s", errstr);
     if (rd_kafka_conf_set(conf, "enable.auto.commit", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() enable.auto.commit, reason = %s", errstr);
-    sds val_of_rcv_max_bytes = sdsfromlonglong(MARSHALL_SIZE_OVERFLOW*2);
-    if (rd_kafka_conf_set(conf, "receive.message.max.bytes", val_of_rcv_max_bytes, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+    sds val_fetch_message_max_bytes = sdsfromlonglong(MARSHALL_SIZE_OVERFLOW*2);
+    sds val_recieve_message_max_bytes = sdsfromlonglong(MARSHALL_SIZE_OVERFLOW*2+512);
+    if (rd_kafka_conf_set(conf, "fetch.message.max.bytes", val_fetch_message_max_bytes, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() fetch.message.max.bytes, reason = %s", errstr);
+    if (rd_kafka_conf_set(conf, "fetch.max.bytes", val_fetch_message_max_bytes, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() fetch.max.bytes, reason = %s", errstr);
+    if (rd_kafka_conf_set(conf, "receive.message.max.bytes", val_recieve_message_max_bytes, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaConsumer failed for rd_kafka_conf_set() receive.message.max.bytes, reason = %s", errstr);
-    sdsfree(val_of_rcv_max_bytes);
+    sdsfree(val_fetch_message_max_bytes);
+    sdsfree(val_recieve_message_max_bytes);
     
     rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
     if (!rk)
-        serverPanic("initKafkaConsumer failed for rd_kafka_new()");
+        serverPanic("initKafkaConsumer failed for rd_kafka_new(), errstr = %s", errstr);
     conf = NULL; /* Configuration object is now owned, and freed, by the rd_kafka_t instance. */
     rd_kafka_poll_set_consumer(rk);
  

@@ -40,7 +40,7 @@ static uint8_t get_available_node_id() {
 
         int buf_len = sizeof(buffer);
         int rc = zoo_get(zh, nodeid_znode, 0, buffer, &buf_len, &stat);        
-        if (rc) {
+        if (rc != ZOK) {
             if (rc != ZNONODE) {
                 serverLog(LL_WARNING, "get_available_node_id() failed for nodeid_znode = %s, rc = %d", 
                           nodeid_znode, rc);
@@ -67,7 +67,7 @@ static void create_znode_for_node_id(uint8_t node_id, const char* my_ip_port, co
 
     int rc = zoo_create(zh, nodeid_znode, my_ip_port, strlen(my_ip_port), 
                         &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, buffer, sizeof(buffer)-1);
-    if (rc) {
+    if (rc != ZOK) {
         serverLog(LL_WARNING, "create_znode_for_node_id() failed, node_id = %d, my_ip_port = %s, zk_server = %s, rc = %d",
                   node_id, my_ip_port, zk_server, rc);
         exit(1);
@@ -83,7 +83,7 @@ static void create_znode_for_ip_port(uint8_t node_id, const char* my_ip_port, co
     my_node_val[0] = node_id;
     int rc = zoo_create(zh, my_znode, my_node_val, 1, 
                         &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, buffer, sizeof(buffer)-1);
-    if (rc) {
+    if (rc != ZOK) {
         serverLog(LL_WARNING, "create_znode_for_ip_port() failed, node_id = %d, my_ip_port = %s, zk_server = %s, rc = %d",
                   node_id, my_ip_port, zk_server, rc);
         exit(1);
@@ -91,12 +91,12 @@ static void create_znode_for_ip_port(uint8_t node_id, const char* my_ip_port, co
     sdsfree(my_znode);
 }
 
-/* if create root znode, return 1; else return 0 */
+/* if create BunnyReids root znode, return 1; else return 0 */
 static int check_or_create_root_znode(const char* zk_server) {
     sds root_znode = sdsnew(BUNNY_ZK_ROOT_NODE);
     int buf_len = sizeof(buffer);
     int rc = zoo_get(zh, root_znode, 0, buffer, &buf_len, &stat);
-    if (rc) {
+    if (rc != ZOK) {
         if (rc != ZNONODE) {
             serverLog(LL_WARNING, "check_or_set_root_znode() zoo_get failed for %s, zk_server = %s, rc = %d", 
                       root_znode, zk_server, rc);
@@ -106,7 +106,7 @@ static int check_or_create_root_znode(const char* zk_server) {
         char *root_value = "This is the BunnyRedis root znode!";
         rc = zoo_create(zh, root_znode, root_value, strlen(root_value), 
                         &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, buffer, sizeof(buffer)-1);
-        if (rc) {
+        if (rc != ZOK) {
             serverLog(LL_WARNING, "check_or_set_root_znode() zoo_create failed for %s, zk_server = %s, rc = %d", 
                       root_znode, zk_server, rc);
             exit(1);
@@ -129,7 +129,7 @@ static void verify_found_node_id(uint8_t node_id, char *my_ip_port) {
     
     int buf_len = sizeof(buffer);
     int rc = zoo_get(zh, check_znode, 0, buffer, &buf_len, &stat);
-    if (rc) {
+    if (rc != ZOK) {
         serverLog(LL_WARNING, "verify_found_node_id() zoo_get failed, node_id = %d, ip_port = %s, rc = %d", 
                   node_id, my_ip_port, rc);
         exit(1);
@@ -287,7 +287,7 @@ uint8_t init_zk_and_get_node_id() {
     my_znode = sdscatlen(my_znode, my_ip_port, strlen(my_ip_port));
     int buf_len = sizeof(buffer);
     int rc = zoo_get(zh, my_znode, 0, buffer, &buf_len, &stat);
-    if (rc) {
+    if (rc != ZOK) {
         if (rc != ZNONODE) {
             serverLog(LL_WARNING, "get zk my node failed for %s, zk_server = %s, rc = %d", 
                       my_znode, server.zk_server, rc);
@@ -350,7 +350,7 @@ void check_or_set_offset(int64_t offset) {
 
     int buf_len = sizeof(buffer);
     int rc = zoo_get(zh, offset_znode, 0, buffer, &buf_len, &stat);
-    if (rc) {
+    if (rc != ZOK) {
         if (rc != ZNONODE) {
             serverLog(LL_WARNING, "check_or_set_offset() failed for zoo_get, znode = %s, zk_server = %s, rc = %d", 
                       offset_znode, server.zk_server, rc);
@@ -360,7 +360,7 @@ void check_or_set_offset(int64_t offset) {
         int64_t kafka_offset = intrev64ifbe(offset);
         rc = zoo_create(zh, offset_znode, (char*)&kafka_offset, sizeof(kafka_offset), 
                         &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, buffer, sizeof(buffer)-1);
-        if (rc) {
+        if (rc != ZOK) {
             serverLog(LL_WARNING, "check_or_set_offset() failed for zoo_create, znode = %s, zk_server = %s, rc = %d", 
                       offset_znode, server.zk_server, rc);
             exit(1);
@@ -458,6 +458,30 @@ sds get_kafka_broker() {
     exit(1);
 }
 
+static void create_change_znode(zhandle_t *zh) {
+    int rc;
+
+    char *changes_znode = "/config/changes";
+    struct String_vector changes;
+    rc = zoo_get_children(zh, changes_znode, 0, &changes);
+    if (rc != ZOK) {
+        serverLog(LL_WARNING, "create_change_znode() failed for rc = %d", rc);
+        exit(1);
+    }
+
+    char *new_znode = "/config/changes/config_change_";
+    // sds new_change_znode = sdsnewlen(prefix, strlen(prefix));
+    // new_change_znode = sdscatlen(new_change_znode, digits, 10);
+    char *new_node_val = "{\"version\":2,\"entity_path\":\"topics/redisStreamWrite\"}";
+    rc = zoo_create(zh, new_znode, new_node_val, strlen(new_node_val), 
+                    &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT_SEQUENTIAL, buffer, sizeof(buffer)-1);
+    if (rc != ZOK) {
+        serverLog(LL_WARNING, "create_change_znode() failed for zoo_create! rc = %d", rc);
+        exit(1);
+    }
+}
+
+/* When set max.message.bytes, we need set the topic znode and create a new znode in /config/changes */
 void set_max_message_bytes(long long set_val) {
     serverAssert(set_val > 0);
 
@@ -474,7 +498,7 @@ void set_max_message_bytes(long long set_val) {
     int rc;
     
     rc = zoo_get(zh, stream_write_znode, 0, buffer, &buf_len, &stat);
-    if (rc || buf_len == -1) {
+    if (rc != ZOK || buf_len == -1) {
         serverLog(LL_WARNING, "set_max_message_bytes() failed for zoo_get, znode = %s, zk_server = %s, rc = %d, buf_len = %d", 
                   stream_write_znode, server.zk_server, rc, buf_len);
         exit(1);
@@ -541,11 +565,13 @@ void set_max_message_bytes(long long set_val) {
     }
 
     rc = zoo_set(zh, stream_write_znode, marshall_for_root, strlen(marshall_for_root), -1);
-    if (rc) {
+    if (rc != ZOK) {
         serverLog(LL_WARNING, "set_max_message_bytes() failed for zoo_set! stream_write_znode = %s, marshall_for_root = %s, rc = %d",
                   stream_write_znode, marshall_for_root, rc);
         exit(1);
     }
+
+    create_change_znode(zh);
 
     zfree(marshall_for_root);
     zookeeper_close(zh);
