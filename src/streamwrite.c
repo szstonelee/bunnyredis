@@ -1303,7 +1303,7 @@ static void* entryInProducerThread(void *arg) {
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() linger.ms, reason = %s", errstr);
     // set time out to be infinite
-    if (rd_kafka_conf_set(conf, "message.timeout.ms", "1",
+    if (rd_kafka_conf_set(conf, "message.timeout.ms", "0",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.timeout.ms, reason = %s", errstr);
     if (rd_kafka_conf_set(conf, "enable.idempotence", "true",

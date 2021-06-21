@@ -425,7 +425,8 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @set",
      0,NULL,1,1,1,0,0,0},
 
-    {"spop",NULL,1,spopCommand,-2,
+    // ramdom write, disable
+    {"spop",NULL,-1,spopCommand,-2,
      "write random fast @set",
      0,NULL,1,1,1,0,0,0},
 
@@ -461,6 +462,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only to-sort @set",
      0,NULL,1,1,1,0,0,0},
 
+    // Because sscan use cursor, but does not use Rock，we can support it
     {"sscan",NULL,0,sscanCommand,-3,
      "read-only random @set",
      0,NULL,1,1,1,0,0,0},
@@ -569,6 +571,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only fast @sortedset",
      0,NULL,1,1,1,0,0,0},
 
+    // Because zscan use cursor, but does not use Rock，we can support it
     {"zscan",NULL,0,zscanCommand,-3,
      "read-only random @sortedset",
      0,NULL,1,1,1,0,0,0},
@@ -655,7 +658,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only random @hash",
      0,NULL,1,1,1,0,0,0},
 
-    // currently we do not support hscan, because cursor is not fixed
+    // We do not support hscan by cursor
     {"hscan",NULL,-1,hscanCommand,-3,
      "read-only random @hash",
      0,NULL,1,1,1,0,0,0},
@@ -739,7 +742,7 @@ struct redisCommand redisCommandTable[] = {
      "read-only to-sort @keyspace @dangerous",
      0,NULL,0,0,0,0,0,0},
 
-    // current, we do not support scan, because cursor is not fixed
+    // We do not support scan by cursor
     {"scan",NULL,-1,scanCommand,-2,
      "read-only random @keyspace",
      0,NULL,0,0,0,0,0,0},

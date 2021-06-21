@@ -416,7 +416,13 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
  * return 0 if not. Redis may reject user's requests or evict some keys if used
  * memory exceeds maxmemory, especially, when we allocate huge memory at once. */
 int overMaxmemoryAfterAlloc(size_t moremem) {
-    if (!server.maxmemory) return  0; /* No limit. */
+    /* It is called by whether it is enabled to expand the dict. 
+     * Because we use server.bunnymem instead of server.maxmemory,
+     * we need to check whether bunnymem is over limit */
+    return !(zmalloc_used_memory() + moremem <= server.bunnymem);
+    
+    /* the following code can not be exectued for BunnyRedis */
+    if (!server.maxmemory) return  0; 
 
     /* Check quickly. */
     size_t mem_used = zmalloc_used_memory();
@@ -425,6 +431,7 @@ int overMaxmemoryAfterAlloc(size_t moremem) {
     size_t overhead = freeMemoryGetNotCountedMemory();
     mem_used = (mem_used > overhead) ? mem_used - overhead : 0;
     return mem_used + moremem > server.maxmemory;
+    
 }
 
 /* The evictionTimeProc is started when "maxmemory" has been breached and

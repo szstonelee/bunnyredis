@@ -2283,6 +2283,8 @@ static int updateReplBacklogSize(long long val, long long prev, const char **err
     return 1;
 }
 
+/* We disable maxmemory. */
+/*
 static int updateMaxmemory(long long val, long long prev, const char **err) {
     UNUSED(prev);
     UNUSED(err);
@@ -2295,6 +2297,7 @@ static int updateMaxmemory(long long val, long long prev, const char **err) {
     }
     return 1;
 }
+*/
 
 static int updateBunnymem(long long val, long long prev, const char **err) {
     UNUSED(prev);
@@ -2521,7 +2524,7 @@ standardConfig configs[] = {
     createEnumConfig("syslog-facility", NULL, IMMUTABLE_CONFIG, syslog_facility_enum, server.syslog_facility, LOG_LOCAL0, NULL, NULL),
     createEnumConfig("repl-diskless-load", NULL, MODIFIABLE_CONFIG, repl_diskless_load_enum, server.repl_diskless_load, REPL_DISKLESS_LOAD_DISABLED, NULL, NULL),
     createEnumConfig("loglevel", NULL, MODIFIABLE_CONFIG, loglevel_enum, server.verbosity, LL_NOTICE, NULL, NULL),
-    createEnumConfig("maxmemory-policy", NULL, IMMUTABLE_CONFIG, maxmemory_policy_enum, server.maxmemory_policy, MAXMEMORY_NO_EVICTION, NULL, NULL),
+    // createEnumConfig("maxmemory-policy", NULL, IMMUTABLE_CONFIG, maxmemory_policy_enum, server.maxmemory_policy, MAXMEMORY_NO_EVICTION, NULL, NULL),
     createEnumConfig("appendfsync", NULL, MODIFIABLE_CONFIG, aof_fsync_enum, server.aof_fsync, AOF_FSYNC_EVERYSEC, NULL, NULL),
     createEnumConfig("oom-score-adj", NULL, MODIFIABLE_CONFIG, oom_score_adj_enum, server.oom_score_adj, OOM_SCORE_ADJ_NO, NULL, updateOOMScoreAdj),
     createEnumConfig("acl-pubsub-default", NULL, MODIFIABLE_CONFIG, acl_pubsub_default_enum, server.acl_pubsub_default, USER_FLAG_ALLCHANNELS, NULL, NULL),
@@ -2529,7 +2532,7 @@ standardConfig configs[] = {
 
     /* Integer configs */
     /* We change server.dbnum up to 256 becasue we encode dbid in uint8_t */
-    createIntConfig("databases", NULL, IMMUTABLE_CONFIG, 1, 256, server.dbnum, 16, INTEGER_CONFIG, NULL, NULL),
+    createIntConfig("databases", NULL, IMMUTABLE_CONFIG, 16, 16, server.dbnum, 16, INTEGER_CONFIG, NULL, NULL),
     createIntConfig("port", NULL, MODIFIABLE_CONFIG, 0, 65535, server.port, 6379, INTEGER_CONFIG, NULL, updatePort), /* TCP port. */
     createIntConfig("io-threads", NULL, IMMUTABLE_CONFIG, 1, 128, server.io_threads_num, 1, INTEGER_CONFIG, NULL, NULL), /* Single threaded by default */
     createIntConfig("auto-aof-rewrite-percentage", NULL, MODIFIABLE_CONFIG, 0, INT_MAX, server.aof_rewrite_perc, 100, INTEGER_CONFIG, NULL, NULL),
@@ -2583,7 +2586,7 @@ standardConfig configs[] = {
     createLongLongConfig("repl-backlog-size", NULL, MODIFIABLE_CONFIG, 1, LLONG_MAX, server.repl_backlog_size, 1024*1024, MEMORY_CONFIG, NULL, updateReplBacklogSize), /* Default: 1mb */
 
     /* Unsigned Long Long configs */
-    createULongLongConfig("maxmemory", NULL, IMMUTABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
+    // createULongLongConfig("maxmemory", NULL, IMMUTABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
     createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, MIN_BUNNY_MEMORY_SIZE, ULLONG_MAX, server.bunnymem, MIN_BUNNY_MEMORY_SIZE, MEMORY_CONFIG, NULL, updateBunnymem),
 
     /* Size_t configs */

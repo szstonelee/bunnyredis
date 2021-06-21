@@ -2764,7 +2764,10 @@ NULL
     } else if (!strcasecmp(c->argv[1]->ptr,"unblock") && (c->argc == 3 ||
                                                           c->argc == 4))
     {
+        addReplyError(c, "CLIENT UNBLOCK not supported by BunnyRedis!");
+
         /* CLIENT UNBLOCK <id> [timeout|error] */
+        /*
         long long id;
         int unblock_error = 0;
 
@@ -2793,6 +2796,7 @@ NULL
         } else {
             addReply(c,shared.czero);
         }
+        */
     } else if (!strcasecmp(c->argv[1]->ptr,"setname") && c->argc == 3) {
         /* CLIENT SETNAME */
         /* if debug, please commonet the following four lines code */
@@ -2820,6 +2824,8 @@ NULL
     } else if (!strcasecmp(c->argv[1]->ptr,"pause") && (c->argc == 3 ||
                                                         c->argc == 4))
     {
+       addReplyError(c,"CLIENT PAUSE not supported in BunnyRedis!");
+       
         /* CLIENT PAUSE TIMEOUT [WRITE|ALL] */
         /*
         mstime_t end;
@@ -2841,7 +2847,6 @@ NULL
         pauseClients(end, type);
         addReply(c,shared.ok);
         */
-       addReplyError(c,"CLIENT PAUSE not supported in BunnyRedis!");
     } else if (!strcasecmp(c->argv[1]->ptr,"tracking") && c->argc >= 3) {
         /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
          *                          [PREFIX second] [OPTIN] [OPTOUT] ... */
