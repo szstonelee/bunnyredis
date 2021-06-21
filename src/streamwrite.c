@@ -22,7 +22,7 @@ static pthread_spinlock_t producerLock;
 
 #define RCV_MSGS_TOO_LONG   1000    // if we recevice to much messages and not quick to consume, it just warns
 
-#define MARSHALL_SIZE_OVERFLOW (64<<20)    // the max messsage size (NOTE: approbally)
+#define MARSHALL_SIZE_OVERFLOW (64<<20)     // the max messsage size (NOTE: approbally)
 
 static int kafkaReadyAndTopicCorrect = 0;   // producer startup check kafka state and main thread wait it for correctness
 redisAtomic int kafkaStartupConsumeFinish;   // when startup, finish all consume data, then unpause all clients to start working

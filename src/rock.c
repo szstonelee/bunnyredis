@@ -1,3 +1,5 @@
+#define USE_STATIC_LIBRARY_FOR_BUNNY
+
 
 #include "server.h"
 #include "rock.h"
@@ -7,7 +9,9 @@
 #include "assert.h"
 #include <rocksdb/c.h>
 #include <ftw.h>
+#ifndef USE_STATIC_LIBRARY_FOR_BUNNY
 #include <libexplain/mkdir.h>
+#endif
 
 #define START_SLEEP_MICRO   16
 #define MAX_SLEEP_MICRO     1024            // max sleep for 1 ms
@@ -558,8 +562,13 @@ static void initRocksdb() {
             // folder not exist
             rek_mkdir(server.bunny_rockdb_path);
         } else {
+#ifndef USE_STATTIC_LIBRARY_FOR_BUNNY
+            serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d", 
+                      server.bunny_rockdb_path, errno);
+#else
             serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d, reason = %s", 
                       server.bunny_rockdb_path, errno, explain_errno_mkdir(errno, server.bunny_rockdb_path, mode));
+#endif
             exit(1);
         }
     }
