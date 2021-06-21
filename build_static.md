@@ -2,6 +2,13 @@ NOTE: no way to know .a is depentant on other library
 
 You can only build an executeable calling the API and then ldd.
 
+# source file
+
+in rock.c uncomment 
+```
+#define USE_STATIC_LIBRARY_FOR_BUNNY
+```
+
 # Zookeeper
 zookker C client is OK for no more depependecy library.
 build libzookeeper_mt.a in ./.libs folder and insstall them
@@ -60,7 +67,11 @@ then
 make clean
 make
 make install
+# because RocksDB will use zstd too, so we need to use the same zstd static library
+cp /root/librdkafka/mklove/deps/dest/libzstd/usr/lib/libzstd.a /usr/local/lib  
 ```
+
+
 
 verify, tring the test code as follow
 ```
@@ -106,3 +117,11 @@ https://hub.fastgit.org/facebook/rocksdb/blob/master/INSTALL.md
 ## openSSL
 
 ref: https://hub.fastgit.org/openssl/openssl
+
+# last
+
+```
+make static
+```
+
+publish(cp) the static-bunny-redis to the release folder

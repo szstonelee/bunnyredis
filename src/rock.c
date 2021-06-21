@@ -1,4 +1,4 @@
-#define USE_STATIC_LIBRARY_FOR_BUNNY
+// #define USE_STATIC_LIBRARY_FOR_BUNNY
 
 
 #include "server.h"
