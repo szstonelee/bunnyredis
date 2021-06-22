@@ -1309,12 +1309,16 @@ static void* entryInProducerThread(void *arg) {
     if (rd_kafka_conf_set(conf, "enable.idempotence", "true",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() enable.idempotence, reason = %s", errstr);
-    // message.max.bytes (for the broker)
+    // message.max.bytes
     sds message_max_bytess = sdsfromlonglong(2 * MARSHALL_SIZE_OVERFLOW);
     if (rd_kafka_conf_set(conf, "message.max.bytes", message_max_bytess,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() message.max.bytes, reason = %s", errstr);
     sdsfree(message_max_bytess);
+    // set producer compression type of LZ4
+    if (rd_kafka_conf_set(conf, "compression.type", "lz4",
+                          errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        serverPanic("initKafkaProducer failed for rd_kafka_conf_set() compression.type, reason = %s", errstr);
 
     rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
     rd_kafka_conf_set_error_cb(conf, error_cb);
@@ -1334,6 +1338,8 @@ static void* entryInProducerThread(void *arg) {
     } else {
         kafkaReadyAndTopicCorrect = 1;  // main thread check the value here
     }
+
+    set_compression_type_for_topic();
 
     sndMsgs = listCreate();
     uint sleepMicro = START_SLEEP_MICRO;      

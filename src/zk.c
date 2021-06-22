@@ -576,3 +576,83 @@ void set_max_message_bytes(long long set_val) {
     zfree(marshall_for_root);
     zookeeper_close(zh);
 }
+
+/* When set max.message.bytes, we need set the topic znode and create a new znode in /config/changes */
+void set_compression_type_for_topic() {
+    zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
+    if (!zh) {
+        serverLog(LL_WARNING, "set_compression_type_for_topic() failed, zk_server = %s, errno = %d\n", 
+                  server.zk_server, errno);
+        exit(1);
+    } 
+
+    char *stream_write_znode = "/config/topics/redisStreamWrite";
+
+    int buf_len = sizeof(buffer);
+    int rc;
+    
+    rc = zoo_get(zh, stream_write_znode, 0, buffer, &buf_len, &stat);
+    if (rc != ZOK || buf_len == -1) {
+        serverLog(LL_WARNING, "set_compression_type_for_topic() failed for zoo_get, znode = %s, zk_server = %s, rc = %d, buf_len = %d", 
+                  stream_write_znode, server.zk_server, rc, buf_len);
+        exit(1);
+    }
+
+    json_error_t err;
+    json_t *root = json_loadb(buffer, buf_len, 0, &err);
+    if (!root || json_typeof(root) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "set_compression_type_for_topic() failed for root json, buffer = %s", buffer);
+        exit(1);
+    }
+
+    json_t *config = json_object_get(root, "config");
+    if (!config || json_typeof(config) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "set_compression_type_for_topic() failed for config json, buffer = %s", buffer);
+        exit(1);
+    }
+
+    json_t *compression_type = json_object_get(config, "compression.type");
+    if (compression_type) {
+        if (json_typeof(compression_type) != JSON_STRING) {
+            serverLog(LL_WARNING, "set_compression_type_for_topic() failed for compression.type json, buffer = %s", buffer);
+            exit(1);
+        }
+        const char *compression_type_str = json_string_value(compression_type);
+
+        if (strcasecmp(compression_type_str, "lz4") == 0)
+            return;     // check succesfully
+
+        // otherwise, we need to update topic compression type to lz4
+        int ret = json_string_set(compression_type, "lz4");
+        if (ret != 0) {
+            serverLog(LL_WARNING, "set_compression_type_for_topic() failed for json_string_set");
+            exit(1);
+        }
+    } else {
+        // not found, it is OK to create
+        json_t *lz4 = json_string("lz4");
+        int ret = json_object_set(config, "compression.type", lz4);
+        if (ret != 0) {
+            serverLog(LL_WARNING, "set_compression_type_for_topic() failed for json_object_set");
+            exit(1);
+        }
+    }
+
+    char* marshall_for_root = json_dumps(root, JSON_COMPACT);
+    if (!marshall_for_root) {
+        serverLog(LL_WARNING, "set_compression_type_for_topic() failed for json_dumps!");
+        exit(1);
+    }
+
+    rc = zoo_set(zh, stream_write_znode, marshall_for_root, strlen(marshall_for_root), -1);
+    if (rc != ZOK) {
+        serverLog(LL_WARNING, "set_compression_type_for_topic() failed for zoo_set! stream_write_znode = %s, marshall_for_root = %s, rc = %d",
+                  stream_write_znode, marshall_for_root, rc);
+        exit(1);
+    }
+
+    create_change_znode(zh);
+
+    zfree(marshall_for_root);
+    zookeeper_close(zh);
+}

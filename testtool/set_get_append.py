@@ -9,7 +9,7 @@ def generate_key_vals(key_num, key_prefix):
     for _ in range(0, key_num):
         rand_str = str(random.randint(0, 10*key_num))
         key = key_prefix + "_" + rand_str
-        val = "val_" + rand_str + "_" + "x"*1000
+        val = "val_" + rand_str + "_" + "x"*10000
         kvs[key] = val
     return kvs
 

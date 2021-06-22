@@ -31,7 +31,12 @@ NOTE: retention.check.interval.ms and log.cleaner.enable log.segment.bytes are f
 bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --topic redisStreamWrite --describe
 ```
 
-set topic max.message.bytes (e.g. 128M)
+set topic compresstion type to lz4
+```
+bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config compression.type=lz4
+```
+
+set topic max.message.bytes (e.g. 128M) // NOTE: bunnyRedis set it in code
 ```
 bin/kafka-topics.sh --zookeeper 127.0.0.1:2181 --alter --topic redisStreamWrite --config max.message.bytes=134217728
 ```

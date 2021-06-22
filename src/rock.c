@@ -13,6 +13,9 @@
 #include <libexplain/mkdir.h>
 #endif
 
+
+#define ROCKSDB_LEVEL_NUM   7
+
 #define START_SLEEP_MICRO   16
 #define MAX_SLEEP_MICRO     1024            // max sleep for 1 ms
 
@@ -588,17 +591,28 @@ static void initRocksdb() {
     rocksdb_options_set_max_write_buffer_number(options, 4);    // memtable number
     // WAL
     // rocksdb_options_set_manual_wal_flush(options, 1);    // current RocksDB API 6.20.3 not support
-    // compaction
+    // compaction (using Universal Compaction)
     rocksdb_options_set_compaction_style(options, rocksdb_universal_compaction);
-    rocksdb_options_set_num_levels(options, 7);   
+    rocksdb_options_set_num_levels(options, ROCKSDB_LEVEL_NUM);   
     rocksdb_options_set_level0_file_num_compaction_trigger(options, 4);
+    // set each level compression types (reference RocksDB API of compression_type.h)
+    int compression_level_types[ROCKSDB_LEVEL_NUM];
+    for (int i = 0; i < ROCKSDB_LEVEL_NUM; ++i) {
+        if (i == 0 || i == 1) {
+            compression_level_types[i] = 0x0;   // kNoCompression
+        } else {
+            compression_level_types[i] = 0x04;      // kLZ4Compression
+        }
+    }
+    rocksdb_options_set_compression_per_level(options, compression_level_types, ROCKSDB_LEVEL_NUM);
     // table options
     rocksdb_options_set_max_open_files(options, 1024);      // if default is -1, no limit, and too many open files consume memory
     rocksdb_options_set_table_cache_numshardbits(options, 4);        // shards for table cache
     rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
-    rocksdb_block_based_options_set_block_size(table_options, 8<<10);
-    // cache
-    rocksdb_cache_t *lru_cache = rocksdb_cache_create_lru(128<<20);        // 128M lru cache
+    // block size (Although the RocksDB website recommend 16K-32K in production), we need a test for 4K or 8K
+    rocksdb_block_based_options_set_block_size(table_options, 4<<10);
+    // block cache
+    rocksdb_cache_t *lru_cache = rocksdb_cache_create_lru(256<<20);        // 256M lru cache
     rocksdb_block_based_options_set_block_cache(table_options, lru_cache);
     // index in cache and partitioned index filter (https://github.com/facebook/rocksdb/wiki/Partitioned-Index-Filters)
     rocksdb_block_based_options_set_index_type(table_options, rocksdb_block_based_table_index_type_two_level_index_search);

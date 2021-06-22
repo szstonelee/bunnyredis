@@ -297,6 +297,7 @@ int yesnotoi(char *s) {
     else return -1;
 }
 
+/* NOTE: BunnyRedis disable RDB/AOF persistency. */
 void appendServerSaveParams(time_t seconds, int changes) {
     return;
 
