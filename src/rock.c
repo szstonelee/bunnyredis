@@ -565,7 +565,7 @@ static void initRocksdb() {
             // folder not exist
             rek_mkdir(server.bunny_rockdb_path);
         } else {
-#ifndef USE_STATTIC_LIBRARY_FOR_BUNNY
+#ifdef USE_STATIC_LIBRARY_FOR_BUNNY
             serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d", 
                       server.bunny_rockdb_path, errno);
 #else

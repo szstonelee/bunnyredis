@@ -1,3 +1,8 @@
+# create publication
+make static 
+cp static-bunny-redis ../release/bunny-redis
+cd ../release
+tar -czf bunny-redis.gz bunny-redis
 
 ycsb
 ```
