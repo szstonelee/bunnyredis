@@ -5,10 +5,9 @@ cd ../release
 tar -czf bunny-redis.gz bunny-redis
 
 ycsb
-```
-./bin/ycsb load redis -P  workloads/workloadb -p redis.host=localhost -p redis.port=8888
-./bin/ycsb load redis -P  workloads/workloadb -p redis.host=localhost -p redis.port=8888 -p recordcount=10 -p fieldlength=1000 -p fieldcount=10000
-```
+
+
+
 
 Kafka FAQ: https://cwiki.apache.org/confluence/display/KAFKA/FAQ#FAQ-ShouldIchoosemultiplegroupidsorasingleonefortheconsumers?
 
@@ -76,7 +75,7 @@ lsof -u root | wc -l
 if run compaction test (set kafka first)
 ./bunny-redis ../redis.conf --nodeid 1 --kafkaCompact yes
 ./bunny-redis ../redis.conf --nodeid 2 --port 6380 --kafkaCompact yes
-r-server --port 8888 --bind 0.0.0.0 --save "" --appendonly no
+redis-server --port 8888 --bind 0.0.0.0 --save "" --appendonly no
 ```
 
 Redis memory: add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect
