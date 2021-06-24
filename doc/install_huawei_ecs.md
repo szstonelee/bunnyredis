@@ -1,6 +1,54 @@
-# 华为云ir3挂接本地磁盘
-
 参考：https://support.huaweicloud.com/qs-evs/evs_01_0033.html
+
+# 华为云ir3磁盘分区和格式化
+
+显示
+```
+fdisk -l
+```
+
+分区和格式化
+```
+fdisk /dev/vdb
+fdisk /dev/vdc
+```
+
+上面两个命令，依次输入（除n外，都是缺省）
+```
+n
+p
+1
+p
+w
+```
+
+最后同步到OS
+```
+partprobe
+```
+
+做mount点
+```
+mkdir br_kafka
+mkdir br_rocksdb
+```
+
+如果现在想用，需要做mount
+
+```
+mount /dev/vdb /root/br_kafka
+mount /dev/vdc /root/br_rocksdb 
+```
+
+最后显示
+```
+df -h
+```
+
+
+# 华为云ir3自动挂接本地磁盘
+
+
 
 ```
 blkid /dev/vdb

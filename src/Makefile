@@ -341,7 +341,7 @@ endif
 
 # redis-server
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -lrdkafka -luuid -lrocksdb -lzookeeper_mt -ljansson
+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -lz -lrdkafka -luuid -lrocksdb -lzookeeper_mt -ljansson
 
 # FINAL_STATIC_LIBS=/usr/local/lib/libjansson.a /usr/local/lib/libhashtable.a 
 FINAL_STATIC_LIBS :=  /usr/local/lib/libjansson.a /usr/local/lib/libzookeeper_mt.a /usr/local/lib/librdkafka-static.a /usr/lib/x86_64-linux-gnu/libuuid.a /usr/local/lib/libsasl2.a -l:libcrypto.a -l:librocksdb.a
