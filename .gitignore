@@ -39,5 +39,8 @@ Makefile.dep
 compile_commands.json
 redis.code-workspace
 src/bunny-redis
+src/static-public-bunny-redis
 testtool/.idea
 testtool/__pycache__
+release/static-bunny-redis
+releasse/bunny-redis
