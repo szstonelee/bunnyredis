@@ -1869,3 +1869,9 @@ void initStreamPipeAndStartConsumer() {
         serverPanic("Unable to create a consumer thread.");
 }
 
+/* NOTE: thread safe */
+int is_startup_on_going() {
+    int consumer_startup;
+    atomicGet(kafkaStartupConsumeFinish, consumer_startup);
+    return consumer_startup == CONSUMER_STARTUP_START;
+}

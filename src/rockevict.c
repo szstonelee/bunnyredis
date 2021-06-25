@@ -202,6 +202,11 @@ static void debugReportMemAndHash() {
     }
 }
 
+static void debugReportMem() {
+    debugReportMemAndKey();
+    debugReportMemAndHash();
+}
+
 /* Given an object returns the min number of milliseconds the object was never
  * requested, using an approximated LRU algorithm. 
  * Refercnet evict.c estimateObjectIdleTime() for more details */
@@ -904,6 +909,15 @@ int checkMemInProcessBuffer(client *c) {
     return reject_cmd_on_oom ? C_ERR : C_OK;
 }
 
+static size_t can_evict_key_zl_size() {
+    size_t total = 0;
+    for (int i = 0; i < server.dbnum; ++i) {
+        redisDb *db = server.db + i;
+        total += dictSize(db->str_zl_norock_keys);
+    }
+    return total;
+} 
+
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
 void cronEvictToMakeRoom() {
@@ -915,6 +929,14 @@ void cronEvictToMakeRoom() {
     }
 
     if (used_mem * 1000 / limit_mem <= 950) return;       // only over 95%, we start to evict
+
+    if (can_evict_key_zl_size() == 0) {
+        if (is_startup_on_going()) {
+            debugReportMemAndKey();
+            serverLog(LL_WARNING, "!!!!!!!!No keys to evict in startup, increase bunnymem or real memory!!!!!!!!!!");
+            exit(1);
+        }
+    }
 
     int res = performeKeyOrHashEvictions(1, 1<<20);
 
@@ -1189,6 +1211,8 @@ void debugEvictCommand(client *c) {
         debugReportMemAndKey();
     } else if (strcasecmp(flag, "reporthash") == 0) {
         debugReportMemAndHash();
+    } else if (strcasecmp(flag, "report") == 0) {
+        debugReportMem();
     } else {
         addReplyError(c, "wrong flag for debugevict!");
         return;

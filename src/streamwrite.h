@@ -40,4 +40,6 @@ void lockConsumerData();
 void unlockConsumerData();
 extern redisAtomic int kafkaStartupConsumeFinish;
 
+int is_startup_on_going();
+
 #endif
