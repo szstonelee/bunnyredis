@@ -41,7 +41,7 @@
 /* Check the length of a number of objects to see if we need to convert a
  * ziplist to a real hash. Note that we only check string encoded objects
  * as their string length can be queried in constant time. */
-void hashTypeTryConversion(int dbid, robj *o, robj **argv, int start, int end) {
+void hashTypeTryConversion(int dbid, sds key, robj *o, robj **argv, int start, int end) {
     int i;
 
     if (o->encoding != OBJ_ENCODING_ZIPLIST) return;
@@ -50,7 +50,7 @@ void hashTypeTryConversion(int dbid, robj *o, robj **argv, int start, int end) {
         if (sdsEncodedObject(argv[i]) &&
             sdslen(argv[i]->ptr) > server.hash_max_ziplist_value)
         {
-            hashTypeConvert(dbid, o, OBJ_ENCODING_HT);
+            hashTypeConvert(dbid, key, o, OBJ_ENCODING_HT);
             break;
         }
     }
@@ -247,7 +247,7 @@ int hashTypeSet(int dbid, sds key, robj *o, sds field, sds value, int flags) {
 
         /* Check if the ziplist needs to be converted to a hash table */
         if (hashTypeLength(o) > server.hash_max_ziplist_entries)
-            hashTypeConvert(dbid, o, OBJ_ENCODING_HT);
+            hashTypeConvert(dbid, key, o, OBJ_ENCODING_HT);
 
     } else if (o->encoding == OBJ_ENCODING_HT) {
         evictHash *evict_hash = NULL;
@@ -555,7 +555,7 @@ void hashTypeConvertZiplist(robj *o, int enc) {
 
 /* NOTE: hashTypeConvert may be called by the real client or others like module or rdb
  * if call from rd or module, dbid < 0 indicating that it does not need update stat of db */
-void hashTypeConvert(int dbid, robj *o, int enc) {
+void hashTypeConvert(int dbid, sds key, robj *o, int enc) {
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
         hashTypeConvertZiplist(o, enc);
         // NOTE: we need to adjust the stat
@@ -564,6 +564,8 @@ void hashTypeConvert(int dbid, robj *o, int enc) {
             redisDb *db = server.db + dbid;
             serverAssert(db->stat_key_ziplist_cnt);
             --db->stat_key_ziplist_cnt;
+            if (key)
+                dictDelete(db->str_zl_norock_keys, key);
             if (o == shared.ziplistRockVal) {
                 serverAssert(db->stat_key_ziplist_rockval_cnt);
                 --db->stat_key_ziplist_rockval_cnt;
@@ -713,7 +715,7 @@ void hashTypeRandomElement(robj *hashobj, unsigned long hashsize, ziplistEntry *
 void hsetnxCommand(client *c) {
     robj *o;
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
-    hashTypeTryConversion(c->db->id, o,c->argv,2,3);
+    hashTypeTryConversion(c->db->id, c->argv[1]->ptr, o,c->argv,2,3);
 
     if (hashTypeExists(o, c->argv[2]->ptr)) {
         addReply(c, shared.czero);
@@ -744,7 +746,7 @@ void hsetCommand(client *c) {
     }
 
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
-    hashTypeTryConversion(c->db->id, o,c->argv,2,c->argc-1);
+    hashTypeTryConversion(c->db->id, c->argv[1]->ptr, o,c->argv,2,c->argc-1);
 
     for (i = 2; i < c->argc; i += 2) {
         sds field = c->argv[i]->ptr;

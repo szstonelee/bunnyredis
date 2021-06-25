@@ -169,12 +169,16 @@ static void debugReportMemAndKey() {
         if (key_cnt) {
             redisDb *db = server.db+i;
             serverLog(LL_WARNING, 
-                      "dbid = %d, key_cnt = %d, hash_cnt = %d, pure_hash_cnt = %d", 
-                      i, key_cnt, hash_cnt, pure_hash_cnt);
-            serverLog(LL_WARNING, "       str cnt(really) = %d, str of raw or embed(really) = %d, stat of str = %lld", str_cnt, str_raw_emb_cnt, db->stat_key_str_cnt);
-            serverLog(LL_WARNING, "       str rock cnt(really) = %d, stat of str rock = %lld", str_rock_cnt, db->stat_key_str_rockval_cnt);
-            serverLog(LL_WARNING, "       ziplist cnt(really) = %d, stat of ziplist = %lld", ziplist_cnt, db->stat_key_ziplist_cnt);
-            serverLog(LL_WARNING, "       ziplist rock cnt(really) = %d, stat of ziplist rock cnt = %lld", ziplist_rock_cnt, db->stat_key_ziplist_rockval_cnt);
+                      "dbid = %d, key_cnt = %d, hash_cnt = %d, pure_hash_cnt = %d, no_rock_total = %lu", 
+                      i, key_cnt, hash_cnt, pure_hash_cnt, dictSize(db->str_zl_norock_keys));
+            serverLog(LL_WARNING, "       str cnt(really) = %d, str of raw or embed(really) = %d, stat of str = %lld, ", 
+                      str_cnt, str_raw_emb_cnt, db->stat_key_str_cnt);
+            serverLog(LL_WARNING, "       str rock cnt(really) = %d, stat of str rock = %lld", 
+                      str_rock_cnt, db->stat_key_str_rockval_cnt);
+            serverLog(LL_WARNING, "       ziplist cnt(really) = %d, stat of ziplist = %lld", 
+                      ziplist_cnt, db->stat_key_ziplist_cnt);
+            serverLog(LL_WARNING, "       ziplist rock cnt(really) = %d, stat of ziplist rock cnt = %lld", 
+                      ziplist_rock_cnt, db->stat_key_ziplist_rockval_cnt);
         }
     }
 }
@@ -212,18 +216,26 @@ unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de) {
     }
 }
 
-static int getSomeKeysForStringAndZiplist(dict *dict_db, dictEntry **de_samples, 
+static int getSomeKeysForStringAndZiplist(dict *dict_sample, dict *dict_real,
+                                          dictEntry **de_samples, 
                                           dict* dict_lru, dictEntry **de_lrus) {
     dictEntry *original_samples[server.maxmemory_samples];                                  
-    int count = dictGetSomeKeys(dict_db, original_samples, server.maxmemory_samples);
+    int count = dictGetSomeKeys(dict_sample, original_samples, server.maxmemory_samples);
 
     int valid_count = 0;
     for (int i = 0; i < count; ++i) {
         sds key = dictGetKey(original_samples[i]);
-        robj *o = dictGetVal(original_samples[i]);
+        // robj *o = dictGetVal(original_samples[i]);
+        dictEntry *de = dictFind(dict_real, key);
+        serverAssert(de);
+        robj *o = dictGetVal(de);
 
         int is_string = (o->type == OBJ_STRING && (o->encoding == OBJ_ENCODING_RAW || o->encoding == OBJ_ENCODING_EMBSTR));
         int is_ziplist = (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_ZIPLIST);
+
+        // We change the sample dict, so there is a guarantee
+        serverAssert((is_string || is_ziplist) && o != shared.keyRockVal);
+
         if ((is_string || is_ziplist) && o->refcount != OBJ_SHARED_REFCOUNT) {
             de_samples[valid_count] = original_samples[i];
             dictEntry *de_lru = dictFind(dict_lru, key);
@@ -258,11 +270,11 @@ static int getSomeKeysForPureHash(dict *dict_sample, dictEntry **de_samples,
 }
 
 /* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
-static size_t evictKeyPoolPopulate(int dbid, dict *sampledict, dict *lru_dict, struct evictKeyPoolEntry *pool) {
+static size_t evictKeyPoolPopulate(int dbid, dict *sample_dict, dict *real_dict, dict *lru_dict, struct evictKeyPoolEntry *pool) {
 
     dictEntry *samples[server.maxmemory_samples];
     dictEntry *lru_samples[server.maxmemory_samples];
-    int count = getSomeKeysForStringAndZiplist(sampledict, samples, lru_dict, lru_samples);
+    int count = getSomeKeysForStringAndZiplist(sample_dict, real_dict, samples, lru_dict, lru_samples);
 
     size_t insert_cnt = 0;
 
@@ -504,8 +516,6 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree)
         dict *dict;
         dictEntry *de;
 
-        // struct evictKeyPoolEntry *pool = EvictKeyPool;
-
         int fail_cnt = 0;
         // unsigned long total_keys, keys;
         unsigned long total_keys;
@@ -523,7 +533,9 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree)
 
                 size_t dict_cnt = dictSize(dict);
                 if (dict_cnt != 0 && dict_cnt != rock_cnt) {
-                    size_t insert_cnt = evictKeyPoolPopulate(i, dict, lru_dict, pool);
+                    // size_t insert_cnt = evictKeyPoolPopulate(i, dict, lru_dict, pool);
+                    // We change sample dict
+                    size_t insert_cnt = evictKeyPoolPopulate(i, db->str_zl_norock_keys, dict, lru_dict, pool);
                     total_keys += insert_cnt;
                 }
             }

@@ -3174,7 +3174,7 @@ int RM_HashSet(RedisModuleKey *key, int flags, ...) {
             low_flags |= HASH_SET_TAKE_FIELD;
 
         robj *argv[2] = {field,value};
-        hashTypeTryConversion(-1, key->value,argv,0,1);
+        hashTypeTryConversion(-1, NULL, key->value,argv,0,1);
         int updated = hashTypeSet(-1, NULL, key->value, field->ptr, value->ptr, low_flags);
         count += (flags & REDISMODULE_HASH_COUNT_ALL) ? 1 : updated;
 

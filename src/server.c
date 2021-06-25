@@ -1525,6 +1525,16 @@ dictType keyLruDictType = {
     dictExpandAllowed           /* allow to expand */
 };
 
+dictType strZlNorockDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    NULL,                       /* key destructor */
+    NULL,                       /* val destructor */
+    dictExpandAllowed           /* allow to expand */
+};
+
 /* It is stored in server.evict_hash_candidates value 
  * key is dbid + key, value is lru */
 dictType hashLruDictType = {
@@ -3406,7 +3416,8 @@ void initServer(void) {
     /* Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType,NULL);
-        server.db[j].key_lrus = dictCreate(&keyLruDictType,NULL);
+        server.db[j].key_lrus = dictCreate(&keyLruDictType, NULL);
+        server.db[j].str_zl_norock_keys = dictCreate(&strZlNorockDictType, NULL);
         server.db[j].expires = dictCreate(&dbExpiresDictType,NULL);
         server.db[j].expires_cursor = 0;
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);

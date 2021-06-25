@@ -218,8 +218,10 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
     // update the stat of Rock
     if (val->type == OBJ_STRING && (val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)) {
         ++db->stat_key_str_cnt;
+        dictAdd(db->str_zl_norock_keys, copy, 0);
     } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_ZIPLIST) {
         ++db->stat_key_ziplist_cnt;
+        dictAdd(db->str_zl_norock_keys, copy, 0);
     } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_HT) {
         // do nothing becuase new hash object can not be added to evict hash candidates
         // uint8_t dbid = db->id;
@@ -272,14 +274,17 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
             // we can not overwirte the old value which is keyRockVal with keyRockVal
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
+        } else {
+            dictDelete(db->str_zl_norock_keys, key->ptr);
         }
-
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_ZIPLIST) {
         serverAssert(db->stat_key_ziplist_cnt);
         --db->stat_key_ziplist_cnt;
         if (old == shared.ziplistRockVal) {
             serverAssert(db->stat_key_ziplist_rockval_cnt);
             --db->stat_key_ziplist_rockval_cnt;
+        } else {
+            dictDelete(db->str_zl_norock_keys, key->ptr);
         }
 
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_HT) {
@@ -302,9 +307,11 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     if (val->type == OBJ_STRING && (val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)) {
         ++db->stat_key_str_cnt;
         serverAssert(val != shared.keyRockVal);
+        dictAdd(db->str_zl_norock_keys, dictGetKey(de), 0);     // NOTE: use the key in db->dict
     } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_ZIPLIST) {
         serverAssert(val != shared.ziplistRockVal);
         ++db->stat_key_ziplist_cnt;
+        dictAdd(db->str_zl_norock_keys, dictGetKey(de), 0);     // NOTE: use the key in db->dict
     } else if (val->type == OBJ_HASH && val->encoding == OBJ_ENCODING_HT) {
         // do nothing, because new val is supposed to not add to evict hash candidates
     }
@@ -478,7 +485,9 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
             dictEmpty(dbarray[j].dict,callback);
             dictEmpty(dbarray[j].expires,callback);
             // we need empty the additional lru
-            dictEmpty(dbarray[j].key_lrus,callback);
+            dictEmpty(dbarray[j].key_lrus, callback);
+            // empty str and ziplist norock keys
+            dictEmpty(dbarray[j].str_zl_norock_keys, callback);
         }
         /* Because all keys of database are removed, reset average ttl. */
         dbarray[j].avg_ttl = 0;

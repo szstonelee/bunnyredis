@@ -1821,7 +1821,7 @@ static void* entryInConsumerThread(void *arg) {
             int percentage = (int)(processed_cnt * 100 / total_resume_cnt);
             if (zmalloc_used_memory() > server.bunnymem) {
                 while (zmalloc_used_memory() > server.bunnymem) {
-                    serverLog(LL_NOTICE, "memory over limit while startup, waiting for 1 second for evict some memeory");
+                    serverLog(LL_NOTICE, "memory over limit while startup, waiting for 1 second to evict some memeory");
                     usleep(1000*1000);
                 }
                 serverLog(LL_NOTICE, "startup can contnue with some memory evicted to RocksDB...");

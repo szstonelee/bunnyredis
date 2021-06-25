@@ -22,8 +22,13 @@ sudo scl enable python27 bash
 
 # config host
 
-add vm.overcommit_memory = 1 to /etc/sysctl.conf then reboot
-add echo never > /sys/kernel/mm/transparent_hugepage/enabled /etc/rc.local
+[参考：prevent OOM](prevent_oom.md)
+
+# 如何清除所有的Kafka Log
+
+```
+bin/kafka-topics.sh --zookeeper localhost:2181 --delete --topic redisStreamWrite
+```
 
 # test in one machine
 
@@ -40,6 +45,15 @@ or
 ```
 
 # run ycsb
+
+## pre load
+
+如果需要大批量，不能用ycsb注入，会timeout，需要用下面的语句提前注入
+
+```
+cd testtool
+python3 pre_inject_for_ycsb.py 127.0.0.1 6379 0 40000000 10
+```
 
 ## load
 

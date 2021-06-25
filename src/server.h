@@ -724,6 +724,7 @@ typedef struct clientReplyBlock {
 typedef struct redisDb {
     dict *dict;                 /* The keyspace for this DB */
     dict *key_lrus;             /* The lru for key which will be used for rockevict.c */
+    dict *str_zl_norock_keys;   /* The string and ziplist not in rock  */
     dict *expires;              /* Timeout of keys with a timeout set */
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
     dict *ready_keys;           /* Blocked keys that received a PUSH */
@@ -1820,6 +1821,7 @@ extern dictType clusterNodesDictType;
 extern dictType clusterNodesBlackListDictType;
 extern dictType dbDictType;
 extern dictType keyLruDictType;
+extern dictType strZlNorockDictType;
 extern dictType evictHashCandidatesDictType;
 extern dictType shaScriptObjectDictType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
@@ -2355,8 +2357,8 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_TAKE_VALUE (1<<1)
 #define HASH_SET_COPY 0
 
-void hashTypeConvert(int dbid, robj *o, int enc);
-void hashTypeTryConversion(int dbid, robj *subject, robj **argv, int start, int end);
+void hashTypeConvert(int dbid, sds key, robj *o, int enc);
+void hashTypeTryConversion(int dbid, sds key, robj *subject, robj **argv, int start, int end);
 int hashTypeExists(robj *o, sds key);
 int hashTypeDelete(int dbid, sds key, robj *o, sds field);      // NOTE: chaned from Redis ogirinal source
 unsigned long hashTypeLength(const robj *o);

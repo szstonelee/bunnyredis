@@ -214,6 +214,7 @@ void emptyDbAsync(redisDb *db) {
     db->dict = dictCreate(&dbDictType,NULL);
     db->expires = dictCreate(&dbExpiresDictType,NULL);
     db->key_lrus = dictCreate(&keyLruDictType, NULL);
+    db->str_zl_norock_keys = dictCreate(&strZlNorockDictType, NULL);
     atomicIncr(lazyfree_objects,dictSize(oldht1));
     bioCreateLazyFreeJob(lazyfreeFreeDatabase,2,oldht1,oldht2, oldht3);
 }

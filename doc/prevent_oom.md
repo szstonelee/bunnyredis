@@ -130,3 +130,16 @@ bunny-redis redis.conf
 config get bunnymem
 config set bunnymem 4000000000
 ```
+
+# 小技巧，Startup时动态改变bunnymem
+
+当BunnyRedis启动时，它会到Kafka读取以前的log，以恢复所有的旧数据，这个时候，内存需求是突然的，而且比较大的，从而有可能发生OOM。
+
+如果你发现启动时经常被kill，你可以尝试用小一点的bunnymem启动，这是个trade off。
+
+坏处：这个startup时间会长
+好处：会保证内存使用很低从而保护BunnyRedis不会被kill
+
+但是注意：bunnymem的内存量至少要容纳所有的key值（而且要多点，因为内存并不是100%紧凑）。
+
+等BunnyRedis启动正常后，再通过config set命令修改bunnymem。
