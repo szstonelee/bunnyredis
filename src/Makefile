@@ -341,10 +341,10 @@ endif
 
 # redis-server
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -lz -lrdkafka -luuid -lrocksdb -lzookeeper_mt -ljansson
+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -lz -llz4 -lrdkafka -luuid -lrocksdb -lzookeeper_mt -ljansson -lstdc++
 
 # FINAL_STATIC_LIBS=/usr/local/lib/libjansson.a /usr/local/lib/libhashtable.a 
-FINAL_STATIC_LIBS :=  /usr/local/lib/libjansson.a /usr/local/lib/libzookeeper_mt.a /usr/local/lib/librdkafka-static.a /usr/lib/x86_64-linux-gnu/libuuid.a /usr/local/lib/libsasl2.a -l:libcrypto.a -l:librocksdb.a
+FINAL_STATIC_LIBS :=  /usr/local/lib/libjansson.a /usr/local/lib/libzookeeper_mt.a /usr/local/lib/librdkafka-static.a /usr/lib/x86_64-linux-gnu/libuuid.a /usr/local/lib/libsasl2.a -l:libcrypto.a -l:librocksdb.a -lstdc++
 $(REDIS_SERVER_NAME_IN_STATIC): $(REDIS_SERVER_OBJ)
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_STATIC_LIBS) $(FINAL_LIBS) -lz -l:libsnappy.a -l:libzstd.a  -l:liblz4.a -l:libbz2.a -l:libgflags.a  -l:libcap.a -l:libstdc++.a -l:libm.a -l:librt.a
 

@@ -37,6 +37,12 @@ vi config/server.properties
 ```
 然后找到log.dirs=/tmp/kafka-logs，修改成你想要的目录名
 
+# 准备执行
+
+```
+cd <your kafka folder> // e.g.  cd kafka_2.13-2.8.0
+```
+
 # 先运行Zookeeper
 
 ```

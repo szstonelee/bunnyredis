@@ -36,7 +36,7 @@ redis-server --bind 0.0.0.0 --save "" --appendonly no
 ```
 ./bunny-redis --zk 127.0.0.1:2181 --bunnydeny no --hash-max-ziplist-entries 10 --hash-max-ziplist-value 1024
 or 
-./bunny-redis --zk 127.0.0.1:2181 --bunnydeny no --hash-max-ziplist-entries 10 --hash-max-ziplist-value 1024 --rocksdb-parent-folder /root/br_rocksdb --bunnymem 2000000000
+./bunny-redis --zk 127.0.0.1:2181 --bunnydeny no --hash-max-ziplist-entries 10 --hash-max-ziplist-value 1024 --rocksdb-parent-folder --hz 50 /root/br_rocksdb
 ```
 
 # run ycsb
