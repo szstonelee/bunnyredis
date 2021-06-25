@@ -4641,7 +4641,7 @@ int prepareForShutdown(int flags) {
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
         server.sentinel_mode ? "Sentinel" : "Redis");
 
-    serverLog(LL_NOTICE, "close rocksdb in %s",getRockdbPath());
+    // serverLog(LL_NOTICE, "close rocksdb in %s",getRockdbPath());
     // We do not need waste time to close db
     // closeRockdb();
 

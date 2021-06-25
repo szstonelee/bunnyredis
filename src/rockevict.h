@@ -16,7 +16,7 @@ unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de);
 evictHash* lookupEvictOfHash(const uint8_t dbid, sds key);
 int checkMemInProcessBuffer(client *c);
 void debugEvictCommand(client *c);
-int performeKeyOrHashEvictions(int must_do, size_t must_tofree);
+int performeKeyOrHashEvictions(int must_do, size_t must_tofree, size_t *real_free);
 void cronEvictToMakeRoom();
 sds combine_dbid_key(const uint8_t dbid, const sds key);
 void free_combine_dbid_key(sds to_free);

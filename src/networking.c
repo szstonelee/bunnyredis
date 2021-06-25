@@ -2178,7 +2178,7 @@ void processInputBuffer(client *c) {
 
             // NOTE: for test of injecting lots of keys, you can use config to set bunny deny
             if (checkMemInProcessBuffer(c) != C_OK) {
-                int evict_res = performeKeyOrHashEvictions(0, 0);
+                int evict_res = performeKeyOrHashEvictions(0, 0, NULL);
                 if (server.bunny_deny) {
                     if (evict_res == EVICT_ROCK_TIMEOUT || evict_res == EVICT_ROCK_NOT_READY) {
                         serverLog(LL_WARNING, "memory is over limit because %s. Memory used = %lu, memory limit = %llu, reject cmd = %s", 

@@ -2,6 +2,7 @@
 #include "dict.h"
 #include "rockevict.h"
 #include "rock.h"
+#include "streamwrite.h"
 
 #define EVPOOL_SIZE 16
 #define EVPOOL_CACHED_SDS_SIZE 255
@@ -451,6 +452,7 @@ static size_t evictPureHashPoolPopulate(int dbid, sds key,
 }
 
 /* if return is bigger than 100, it means total cnt is zero */
+/*
 static int getRockKeyOfStringAndZiplistPercentage() {
     long long str_cnt = 0;
     long long str_rock_cnt = 0;
@@ -469,13 +471,23 @@ static int getRockKeyOfStringAndZiplistPercentage() {
 
     return total_cnt == 0 ? 101 :(int)((long long)100 * (str_rock_cnt + ziplist_rock_cnt) / total_cnt);    
 }
+*/
+
+static size_t can_evict_key_zl_size() {
+    size_t total = 0;
+    for (int i = 0; i < server.dbnum; ++i) {
+        redisDb *db = server.db + i;
+        total += dictSize(db->str_zl_norock_keys);
+    }
+    return total;
+} 
 
 /* return EVICT_ROCK_ENOUGH_MEM if no need to eviction value because of enough free memory 
  * return EVICT_ROCK_NOT_READY if the percentage of string(ziplist) key with value in RocksDB of total key is too high or zero
  * return EVICT_ROCK_FREE    if evict enough memory 
  * return EVICT_ROCK_TIMEOUT if timeout and not enought memory has been released 
  * If must_od is ture, we ignore the memory over limit check */
-static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree) {
+static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree, size_t *real_free) {
     int keys_freed = 0;
     size_t mem_tofree;
     long long mem_freed; /* May be negative */
@@ -488,10 +500,11 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree)
     // Check the percentage of RockKey vs total key. 
     // We do not need to waste time for high percentage of rock keys, e.g. 98%, 
     // because mostly it will be timeout for no evicting enough memory
-    int rock_key_percentage = getRockKeyOfStringAndZiplistPercentage();
-    if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
-        return EVICT_ROCK_NOT_READY; 
-    }
+    // int rock_key_percentage = getRockKeyOfStringAndZiplistPercentage();
+    // if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
+    //     return EVICT_ROCK_NOT_READY; 
+    // }
+    if (can_evict_key_zl_size() == 0) return EVICT_ROCK_NOT_READY;
 
     if (must_do) {
         if (used >= server.bunnymem) {
@@ -618,6 +631,7 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree)
         }
     }
 
+    if (real_free) *real_free = mem_freed > 0 ? mem_freed : 0;
     return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;
 }
 
@@ -807,7 +821,7 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
  * If one is successfully, then the next 8 times will try to use it again. 
  * RETURN is EVICT_ROCK_ENOUGH_MEM, EVICT_ROCK_NOT_READY, EVICT_ROCK_FREE or EVICT_ROCK_TIMEOUT */
 #define CONTINUOUS_EVICT_MAX 8
-int performeKeyOrHashEvictions(int must_do, size_t must_tofree) {
+int performeKeyOrHashEvictions(int must_do, size_t must_tofree, size_t *real_free) {
     static int dice = 0;
     static int evict_str_cnt = 0;
     static int evict_hash_cnt = 0;
@@ -828,7 +842,7 @@ int performeKeyOrHashEvictions(int must_do, size_t must_tofree) {
     }
 
     if (dice == 0) {
-        int try_str_res = performKeyOfStringOrZiplistEvictions(must_do, must_tofree);
+        int try_str_res = performKeyOfStringOrZiplistEvictions(must_do, must_tofree, real_free);
         if (try_str_res == EVICT_ROCK_ENOUGH_MEM) {
             return EVICT_ROCK_ENOUGH_MEM;       
         } else if (try_str_res == EVICT_ROCK_FREE) {
@@ -859,7 +873,7 @@ int performeKeyOrHashEvictions(int must_do, size_t must_tofree) {
         } else {
             // we must try another way
             dice = 0;
-            int try_str_res = performKeyOfStringOrZiplistEvictions(must_do, must_tofree);
+            int try_str_res = performKeyOfStringOrZiplistEvictions(must_do, must_tofree, real_free);
             if (try_str_res == EVICT_ROCK_ENOUGH_MEM) {
                 return EVICT_ROCK_ENOUGH_MEM;
             } else if (try_str_res == EVICT_ROCK_FREE) {
@@ -909,15 +923,6 @@ int checkMemInProcessBuffer(client *c) {
     return reject_cmd_on_oom ? C_ERR : C_OK;
 }
 
-static size_t can_evict_key_zl_size() {
-    size_t total = 0;
-    for (int i = 0; i < server.dbnum; ++i) {
-        redisDb *db = server.db + i;
-        total += dictSize(db->str_zl_norock_keys);
-    }
-    return total;
-} 
-
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
 void cronEvictToMakeRoom() {
@@ -938,16 +943,23 @@ void cronEvictToMakeRoom() {
         }
     }
 
-    int res = performeKeyOrHashEvictions(1, 1<<20);
+    static size_t total_free_in_cron = 0;
+    size_t real_free = 0;
+    int res = performeKeyOrHashEvictions(1, 1<<20, &real_free);
 
     static int over_pencentage_cnt = 0;
     if (res == EVICT_ROCK_NOT_READY) {
         ++over_pencentage_cnt;
         over_pencentage_cnt = over_pencentage_cnt % 128;        // if Hz 50, so 2 seconds report once
-        if (over_pencentage_cnt == 0)
-            serverLog(LL_WARNING, "memory is over limit. I have evicted something, but need do more in future...");
+        if (over_pencentage_cnt == 0) {
+            serverLog(LL_WARNING, "memory is over limit. I have evicted %lu(k), but need do more in future...",
+                      total_free_in_cron/1000);
+            total_free_in_cron = 0;
+        }
     } else if (res == EVICT_ROCK_NOT_READY) {
         serverLog(LL_WARNING, "memory is over limit and high percentage of dataset in Rock already. I can not do more in future!");
+    } else if (res == EVICT_ROCK_NOT_READY || res == EVICT_ROCK_TIMEOUT) {
+        total_free_in_cron += real_free;
     }
 }
 
@@ -1180,7 +1192,7 @@ void debugEvictCommand(client *c) {
         serverLog(LL_WARNING, "===== before evcition ===========");
         debugReportMemAndKey();
         serverLog(LL_WARNING, "===== after evcition ===========");
-        int res = performKeyOfStringOrZiplistEvictions(0, 0);
+        int res = performKeyOfStringOrZiplistEvictions(0, 0, NULL);
         char *str_res;
         switch(res) {
         case EVICT_ROCK_ENOUGH_MEM: str_res = "EVICT_ROCK_ENOUGH_MEM"; break;
