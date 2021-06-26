@@ -984,14 +984,26 @@ int checkMemInProcessBuffer(client *c) {
 
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 // #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
-#define MUST_FREE_MEM_SIZE 1<<20
+#define FREE_LOWER_BOUND 1<<20
+#define FREE_UPPER_BOUND 20<<20
 void cronEvictToMakeRoom() {
-    if (zmalloc_used_memory() <= server.bunnymem) 
+    size_t used = zmalloc_used_memory();
+    if (used <= server.bunnymem) 
         return;    
+
+    size_t delta = used - server.bunnymem;
+    size_t must_free;
+    if (delta >= FREE_UPPER_BOUND) {
+        must_free = FREE_UPPER_BOUND;
+    } else if (delta < FREE_LOWER_BOUND) {
+        must_free = FREE_LOWER_BOUND;
+    } else {
+        must_free = delta;
+    }
 
     static size_t total_free_in_cron = 0;
     size_t real_free = 0;
-    int res = performeKeyOrHashEvictions(1, MUST_FREE_MEM_SIZE, &real_free);     // must free 1 Megabyte
+    int res = performeKeyOrHashEvictions(1, must_free, &real_free);     // must free 1 Megabyte
 
     if (res == EVICT_ROCK_NOT_READY) {
         if (is_startup_on_going()) {
