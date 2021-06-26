@@ -1822,7 +1822,7 @@ static void* entryInConsumerThread(void *arg) {
                 if (consumer_wait_cnt == 0)
                     serverLog(LL_NOTICE, "memory over limit while startup, waiting for background job to evict some memeory");
                 while (zmalloc_used_memory() > server.bunnymem) {     
-                    usleep(10*1000);
+                    usleep(5*1000);
                 }
                 if (consumer_wait_cnt == 0)
                     serverLog(LL_NOTICE, "startup can contnue with some memory evicted to RocksDB...");
