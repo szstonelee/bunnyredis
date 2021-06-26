@@ -847,27 +847,37 @@ int performeKeyOrHashEvictions(int must_do, size_t must_tofree, size_t *real_fre
     if (str_zl_no_rock_total == 0 && pure_field_no_rock_total == 0) 
         return EVICT_ROCK_NOT_READY;
 
-    if (str_zl_no_rock_total == 0) {
-        int ret = performKeyOfPureHashEvictions(must_do, must_tofree, real_free);
-        serverAssert(ret != EVICT_ROCK_NOT_READY);
-        return ret;
-    }
+    int do_str_zl;
     
     if (pure_field_no_rock_total == 0) {
-        int ret = performKeyOfStringOrZiplistEvictions(must_do, must_tofree, real_free);
-        serverAssert(ret != EVICT_ROCK_NOT_READY);
-        return ret;
+        do_str_zl = 1;
+    } else if (str_zl_no_rock_total == 0) {
+        do_str_zl = 0;
+    } else {
+        size_t perc_str_zl = str_zl_no_rock_total*1000/str_zl_cnt;
+        size_t perc_pur_hash =  pure_field_no_rock_total*1000/pure_field_cnt;
+    
+        if (perc_str_zl == perc_pur_hash) {
+            if (str_zl_no_rock_total >= pure_field_no_rock_total) {
+                do_str_zl = 1;
+            } else {
+                do_str_zl = 0;
+            }
+        } else if (perc_str_zl > perc_pur_hash) {
+            do_str_zl = 1;
+        } else {
+            do_str_zl = 0;
+        }
     }
 
-    if (str_zl_no_rock_total*1000/str_zl_cnt >= pure_field_no_rock_total*1000/pure_field_cnt) {
-        int ret = performKeyOfStringOrZiplistEvictions(must_do, must_tofree, real_free);
-        serverAssert(ret != EVICT_ROCK_NOT_READY);
-        return ret;
+    int ret;
+    if (do_str_zl) {
+        ret = performKeyOfStringOrZiplistEvictions(must_do, must_tofree, real_free);
     } else {
-        int ret = performKeyOfPureHashEvictions(must_do, must_tofree, real_free);
-        serverAssert(ret != EVICT_ROCK_NOT_READY);
-        return ret;
+        ret = performKeyOfPureHashEvictions(must_do, must_tofree, real_free);
     }
+    serverAssert(ret != EVICT_ROCK_NOT_READY);
+    return ret;
 
 /*
     static int dice = 0;
