@@ -980,8 +980,8 @@ int checkMemInProcessBuffer(client *c) {
 
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 // #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
-#define FREE_LOWER_BOUND 1<<20
-#define FREE_UPPER_BOUND 20<<20
+#define FREE_LOWER_BOUND 5<<20
+#define FREE_UPPER_BOUND 50<<20
 void cronEvictToMakeRoom() {
     size_t used = zmalloc_used_memory();
     if (used <= server.bunnymem) 
