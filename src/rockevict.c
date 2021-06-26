@@ -40,6 +40,17 @@ dictType fieldLruDictType = {
     dictExpandAllowed           /* allow to expand */
 };
 
+dictType pureHashNoRockDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    NULL,                       /* key destructor */
+    NULL,                       /* val destructor */
+    dictExpandAllowed           /* allow to expand */
+};
+
+
 static struct evictHashPoolEntry *EvictHashPool;
 /* used for cache the combined key for memory performance 
  * check combine_dbid_key() and free_combine_dbid_key() for more details */
@@ -196,10 +207,10 @@ static void debugReportMemAndHash() {
         evictHash *evict_hash = server.evic_hash_candidates + i;
         if (!evict_hash->used) continue;
 
-        serverLog(LL_WARNING, "hash candidates, dbid = %u, key = %s, field cnt = %lu, lru cnt = %lu, rock cnt = %lld",
+        serverLog(LL_WARNING, "hash candidates, dbid = %u, key = %s, field cnt = %lu, lru cnt = %lu, rock cnt = %lld, no_rockss size = %lu",
                   evict_hash->dbid, evict_hash->key, 
                   dictSize(evict_hash->dict_hash), dictSize(evict_hash->field_lru),
-                  evict_hash->rock_cnt);
+                  evict_hash->rock_cnt, dictSize(evict_hash->no_rocks));
     }
 }
 
@@ -217,8 +228,7 @@ unsigned long long estimateObjectIdleTimeFromLruDictEntry(dictEntry *de) {
     if (lruclock >= my_lru) {
         return (lruclock - my_lru) * LRU_CLOCK_RESOLUTION;
     } else {
-        return (lruclock + (LRU_CLOCK_MAX - my_lru)) *
-                    LRU_CLOCK_RESOLUTION;
+        return (lruclock + (LRU_CLOCK_MAX - my_lru)) * LRU_CLOCK_RESOLUTION;
     }
 }
 
@@ -242,8 +252,8 @@ static int getSomeKeysForStringAndZiplist(dict *dict_sample, dict *dict_real,
         // We change the sample dict, so there is a guarantee
         serverAssert((is_string || is_ziplist) && o != shared.keyRockVal);
 
-        if ((is_string || is_ziplist) && o->refcount != OBJ_SHARED_REFCOUNT) {
-            de_samples[valid_count] = original_samples[i];
+        if (o->refcount != OBJ_SHARED_REFCOUNT) {
+            de_samples[valid_count] = de;
             dictEntry *de_lru = dictFind(dict_lru, key);
             serverAssert(de_lru);
             de_lrus[valid_count] = de_lru;
@@ -253,26 +263,24 @@ static int getSomeKeysForStringAndZiplist(dict *dict_sample, dict *dict_real,
     return valid_count;
 }
 
-static int getSomeKeysForPureHash(dict *dict_sample, dictEntry **de_samples, 
+static int getSomeKeysForPureHash(dict *dict_sample, dict *dict_real, dictEntry **de_samples, 
                                   dict* dict_lru, dictEntry **de_lrus) {
     dictEntry *original_samples[server.maxmemory_samples];                                  
     int count = dictGetSomeKeys(dict_sample, original_samples, server.maxmemory_samples);
 
-    int valid_count = 0;
     for (int i = 0; i < count; ++i) {
-        sds val = dictGetVal(original_samples[i]);
-        if (val != shared.hashRockVal) {
-            sds field = dictGetKey(original_samples[i]);
-            dictEntry *de_lru = dictFind(dict_lru, field);
-            // if (de_lru) {
-            // Why ? need to debug
-            de_samples[valid_count] = original_samples[i];
-            de_lrus[valid_count] = de_lru;
-             ++valid_count;
-            // }
-        }
+        sds field = dictGetKey(original_samples[i]);
+        dictEntry *de = dictFind(dict_real, field);
+        serverAssert(de);
+        serverAssert(dictGetVal(de) != shared.hashRockVal);
+
+        dictEntry *de_lru = dictFind(dict_lru, field);
+        serverAssert(de_lru);
+
+        de_samples[i] = de;
+        de_lrus[i] = de_lru;
     }
-    return valid_count;
+    return count;
 }
 
 /* NOTE: does not like evict.c similiar function, we do not evict anything from TTL dict */
@@ -357,18 +365,18 @@ static size_t evictKeyPoolPopulate(int dbid, dict *sample_dict, dict *real_dict,
 /* NOTE1: does not like evict.c similiar function, we do not evict anything from TTL dict 
  * NOTE2: sampledict is the hash dict that key is sds of field and value is sds value (NOT robj*) */
 static size_t evictPureHashPoolPopulate(int dbid, sds key, 
-                                        dict *sampledict, dict *lru_dict, struct evictHashPoolEntry *pool) {
+                                        dict *sample_dict, 
+                                        dict *real_dict, dict *lru_dict, struct evictHashPoolEntry *pool) {
 
     dictEntry *samples[server.maxmemory_samples];
     dictEntry *lru_samples[server.maxmemory_samples];
-    int count = getSomeKeysForPureHash(sampledict, samples, lru_dict, lru_samples);
+    int count = getSomeKeysForPureHash(sample_dict, real_dict, samples, lru_dict, lru_samples);
 
     size_t insert_cnt = 0;
 
     int j, k;
     unsigned long long idle;
     sds field;
-    // sds keyWithField;
     dictEntry *de;
     dictEntry *lru_de;
     sds cached_field;
@@ -473,18 +481,25 @@ static int getRockKeyOfStringAndZiplistPercentage() {
 }
 */
 
-static size_t can_evict_key_zl_size() {
-    size_t total = 0;
+static size_t can_evict_key_zl_size(size_t *str_zl_cnt) {
+    size_t no_rock_total = 0;
+    if (str_zl_cnt) *str_zl_cnt = 0;
+
     for (int i = 0; i < server.dbnum; ++i) {
         redisDb *db = server.db + i;
-        total += dictSize(db->str_zl_norock_keys);
+        no_rock_total += dictSize(db->str_zl_norock_keys);
+        if (str_zl_cnt) {
+            serverAssert(db->stat_key_str_cnt >= 0);
+            *str_zl_cnt = *str_zl_cnt + db->stat_key_str_cnt;
+            serverAssert(db->stat_key_ziplist_cnt >= 0);
+            *str_zl_cnt = *str_zl_cnt + db->stat_key_ziplist_cnt;
+        }
     }
-    return total;
+
+    return no_rock_total;
 } 
 
-/* return EVICT_ROCK_ENOUGH_MEM if no need to eviction value because of enough free memory 
- * return EVICT_ROCK_NOT_READY if the percentage of string(ziplist) key with value in RocksDB of total key is too high or zero
- * return EVICT_ROCK_FREE    if evict enough memory 
+/* return EVICT_ROCK_FREE    if evict enough memory 
  * return EVICT_ROCK_TIMEOUT if timeout and not enought memory has been released 
  * If must_od is ture, we ignore the memory over limit check */
 static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree, size_t *real_free) {
@@ -494,18 +509,6 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree,
     long long delta;
 
     size_t used = zmalloc_used_memory();
-    if (!must_do && used <= server.bunnymem)
-        return EVICT_ROCK_ENOUGH_MEM;        // used memory not over limit and not must_do
-
-    // Check the percentage of RockKey vs total key. 
-    // We do not need to waste time for high percentage of rock keys, e.g. 98%, 
-    // because mostly it will be timeout for no evicting enough memory
-    // int rock_key_percentage = getRockKeyOfStringAndZiplistPercentage();
-    // if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
-    //     return EVICT_ROCK_NOT_READY; 
-    // }
-    if (can_evict_key_zl_size() == 0) return EVICT_ROCK_NOT_READY;
-
     if (must_do) {
         if (used >= server.bunnymem) {
             mem_tofree = used - server.bunnymem > must_tofree ? used - server.bunnymem : must_tofree;
@@ -513,7 +516,9 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree,
             mem_tofree = must_tofree;
         }
     } else {
-        serverAssert(used > server.bunnymem);
+        if(used <= server.bunnymem) 
+            return EVICT_ROCK_FREE;
+
         mem_tofree = used - server.bunnymem;
     }
 
@@ -636,6 +641,7 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree,
 }
 
 /* if return is bigger than 100, it means fieldCnt is zero */
+/*
 static int getRockKeyOfPureHashPercentage() {
     long long field_cnt = 0;
     long long rock_cnt = 0;
@@ -650,13 +656,27 @@ static int getRockKeyOfPureHashPercentage() {
 
     return field_cnt == 0 ? 101 :(int)((long long)100 * rock_cnt / field_cnt);    
 }
+*/
 
-/* return EVICT_ROCK_ENOUGH_MEM if no need to eviction value because of enough free memory 
- * return EVICT_ROCK_NOT_READY if the percentage of string key with value in RocksDB of total string key is too high or zero key
- * return EVICT_ROCK_FREE    if evict enough memory 
+static size_t can_evict_pure_hash_size(size_t *field_cnt) {
+    size_t no_rock_total = 0;
+    if (field_cnt) *field_cnt = 0;
+
+    for (int i = 0; i < EVICT_HASH_CANDIDATES_MAX_SIZE; ++i) {
+        evictHash *evict_hash = server.evic_hash_candidates + i;
+        if (!evict_hash->used) continue;
+
+        no_rock_total += dictSize(evict_hash->no_rocks);
+        if (field_cnt) *field_cnt = *field_cnt + dictSize(evict_hash->dict_hash);
+    }
+
+    return no_rock_total;
+} 
+
+/* return EVICT_ROCK_FREE    if evict enough memory 
  * return EVICT_ROCK_TIMEOUT if timeout and not enought memory has been released 
  * If must_od is ture, we ignore the memory over limit check */
-static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
+static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t *real_free) {
     // return EVICT_ROCK_ENOUGH_MEM;   // debug
 
     int keys_freed = 0;
@@ -665,17 +685,6 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
     long long delta;
 
     size_t used = zmalloc_used_memory();
-    if (!must_do && used <= server.bunnymem)
-        return EVICT_ROCK_ENOUGH_MEM;        // used memory not over limit and not must_do
-
-    // Check the percentage of Rock field vs total hash fields. 
-    // We do not need to waste time for high percentage of rock fields, e.g. 98%, 
-    // because mostly it will be timeout for no evicting enough memory
-    int rock_key_percentage = getRockKeyOfPureHashPercentage();
-    if (rock_key_percentage >= ROCK_KEY_UPPER_PERCENTAGE) {
-        return EVICT_ROCK_NOT_READY; 
-    }
-
     if (must_do) {
         if (used >= server.bunnymem) {
             mem_tofree = used - server.bunnymem > must_tofree ? used - server.bunnymem : must_tofree;
@@ -683,7 +692,9 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
             mem_tofree = must_tofree;
         }
     } else {
-        serverAssert(used > server.bunnymem);
+        if(used <= server.bunnymem) 
+            return EVICT_ROCK_FREE;
+
         mem_tofree = used - server.bunnymem;
     }
 
@@ -699,10 +710,6 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
         sds bestkeyWithField = NULL;
         int bestdbid = -1;
         sds valstrsds;
-        // redisDb *db;
-        // dict *lru_dict;
-
-        // dict *dict_of_db;
         dictEntry *de_of_db;
         dict *dict_of_hash;
         dictEntry *de_of_hash;
@@ -721,6 +728,7 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
                 evictHash *evict_hash = server.evic_hash_candidates + i;
                 if (!evict_hash->used) continue;
                 total_keys += evictPureHashPoolPopulate(evict_hash->dbid, evict_hash->key,
+                                                        evict_hash->no_rocks,
                                                         evict_hash->dict_hash, evict_hash->field_lru, pool);
             }
 
@@ -799,6 +807,8 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
             evictHash *evict_hash = lookupEvictOfHash(bestdbid, bestkeyWithField);
             if (evict_hash) {
                 ++evict_hash->rock_cnt;
+                int ret = dictDelete(evict_hash->no_rocks, bestfield);
+                serverAssert(ret == DICT_OK);
             }
             addRockWriteTaskOfHash(bestdbid, bestkeyWithField, bestfield, valstrsds);
             sdsfree(valstrsds);
@@ -814,14 +824,52 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree) {
         }
     }
 
+    if (real_free) *real_free = mem_freed > 0 ? mem_freed : 0;
     return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;
 }
 
 /* We have two choice of eviction, key (include hash with ziplist) or pure hash. We try randomly to use one. 
- * If one is successfully, then the next 8 times will try to use it again. 
+ * We always choose the higher percentage one 
  * RETURN is EVICT_ROCK_ENOUGH_MEM, EVICT_ROCK_NOT_READY, EVICT_ROCK_FREE or EVICT_ROCK_TIMEOUT */
-#define CONTINUOUS_EVICT_MAX 8
+// #define CONTINUOUS_EVICT_MAX 8
 int performeKeyOrHashEvictions(int must_do, size_t must_tofree, size_t *real_free) {
+    if (!must_do && zmalloc_used_memory() <= server.bunnymem)
+        // used memory not over limit and not must_do
+        return EVICT_ROCK_ENOUGH_MEM;        
+
+    size_t str_zl_cnt;
+    size_t str_zl_no_rock_total = can_evict_key_zl_size(&str_zl_cnt);
+    serverAssert(str_zl_cnt >= str_zl_no_rock_total);
+    size_t pure_field_cnt;
+    size_t pure_field_no_rock_total = can_evict_pure_hash_size(&pure_field_cnt);
+    serverAssert(pure_field_cnt >= pure_field_no_rock_total);
+
+    if (str_zl_no_rock_total == 0 && pure_field_no_rock_total == 0) 
+        return EVICT_ROCK_NOT_READY;
+
+    if (str_zl_no_rock_total == 0) {
+        int ret = performKeyOfPureHashEvictions(must_do, must_tofree, real_free);
+        serverAssert(ret != EVICT_ROCK_NOT_READY);
+        return ret;
+    }
+    
+    if (pure_field_no_rock_total == 0) {
+        int ret = performKeyOfStringOrZiplistEvictions(must_do, must_tofree, real_free);
+        serverAssert(ret != EVICT_ROCK_NOT_READY);
+        return ret;
+    }
+
+    if (str_zl_no_rock_total*1000/str_zl_cnt >= pure_field_no_rock_total*1000/pure_field_cnt) {
+        int ret = performKeyOfStringOrZiplistEvictions(must_do, must_tofree, real_free);
+        serverAssert(ret != EVICT_ROCK_NOT_READY);
+        return ret;
+    } else {
+        int ret = performKeyOfPureHashEvictions(must_do, must_tofree, real_free);
+        serverAssert(ret != EVICT_ROCK_NOT_READY);
+        return ret;
+    }
+
+/*
     static int dice = 0;
     static int evict_str_cnt = 0;
     static int evict_hash_cnt = 0;
@@ -851,7 +899,7 @@ int performeKeyOrHashEvictions(int must_do, size_t must_tofree, size_t *real_fre
         } else {
             // we must try another way
             dice = 1;
-            int try_hash_res = performKeyOfPureHashEvictions(must_do, must_tofree);
+            int try_hash_res = performKeyOfPureHashEvictions(must_do, must_tofree, real_free);
             if (try_hash_res == EVICT_ROCK_ENOUGH_MEM) {
                 return EVICT_ROCK_ENOUGH_MEM;
             } else if (try_hash_res == EVICT_ROCK_FREE) {
@@ -864,7 +912,7 @@ int performeKeyOrHashEvictions(int must_do, size_t must_tofree, size_t *real_fre
         }        
     } else {
         serverAssert(dice == 1);
-        int try_hash_res = performKeyOfPureHashEvictions(must_do, must_tofree);
+        int try_hash_res = performKeyOfPureHashEvictions(must_do, must_tofree, real_free);
         if (try_hash_res == EVICT_ROCK_ENOUGH_MEM) {
             return EVICT_ROCK_ENOUGH_MEM;
         } else if (try_hash_res == EVICT_ROCK_FREE) {
@@ -885,6 +933,7 @@ int performeKeyOrHashEvictions(int must_do, size_t must_tofree, size_t *real_fre
             }
         }
     }
+*/
 }
 
 /* In networking.c processInputBuffer(), we need to check the memory usage */
@@ -924,30 +973,45 @@ int checkMemInProcessBuffer(client *c) {
 }
 
 /* cron job to make some room to avoid the forbidden command due to memory limit */
-#define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
+// #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
+#define MUST_FREE_MEM_SIZE 1<<20
 void cronEvictToMakeRoom() {
-    size_t used_mem = zmalloc_used_memory();
-    size_t limit_mem = server.bunnymem;
+    if (zmalloc_used_memory() <= server.bunnymem) 
+        return;    
 
-    if (limit_mem > used_mem) {
-        if (limit_mem - used_mem >= ENOUGH_MEM_SPACE) return;    
-    }
+    static size_t total_free_in_cron = 0;
+    size_t real_free = 0;
+    int res = performeKeyOrHashEvictions(1, MUST_FREE_MEM_SIZE, &real_free);     // must free 1 Megabyte
 
-    if (used_mem * 1000 / limit_mem <= 950) return;       // only over 95%, we start to evict
-
-    if (can_evict_key_zl_size() == 0) {
+    if (res == EVICT_ROCK_NOT_READY) {
         if (is_startup_on_going()) {
             debugReportMemAndKey();
             serverLog(LL_WARNING, "!!!!!!!!No keys to evict in startup, increase bunnymem or real memory!!!!!!!!!!");
             exit(1);
+        } else {
+            total_free_in_cron = 0;
+            return;
+        }
+    }
+    total_free_in_cron += real_free;
+
+    static int over_pencentage_cnt = 0;
+    ++over_pencentage_cnt;
+    over_pencentage_cnt = over_pencentage_cnt % 128;
+    if (res == EVICT_ROCK_ENOUGH_MEM || res == EVICT_ROCK_FREE) {
+        total_free_in_cron = 0;
+        over_pencentage_cnt = 0;
+    } else {
+        serverAssert(res == EVICT_ROCK_TIMEOUT);
+        if (over_pencentage_cnt == 0) {
+            // if Hz 50, so 2 seconds report once
+            serverLog(LL_WARNING, "memory is over limit. I have evicted %lu(k), but need do more in future...",
+                      total_free_in_cron/1024);
+            total_free_in_cron = 0;
         }
     }
 
-    static size_t total_free_in_cron = 0;
-    size_t real_free = 0;
-    int res = performeKeyOrHashEvictions(1, 1<<20, &real_free);
-
-    static int over_pencentage_cnt = 0;
+    /*
     if (res == EVICT_ROCK_NOT_READY) {
         ++over_pencentage_cnt;
         over_pencentage_cnt = over_pencentage_cnt % 128;        // if Hz 50, so 2 seconds report once
@@ -961,6 +1025,7 @@ void cronEvictToMakeRoom() {
     } else if (res == EVICT_ROCK_NOT_READY || res == EVICT_ROCK_TIMEOUT) {
         total_free_in_cron += real_free;
     }
+    */
 }
 
 /* find evictHash in server.evict_hash_candidates 
@@ -1026,6 +1091,7 @@ evictHash* removeHashCandidate(uint8_t dbid, sds key) {
             // sdsfree(evict_hash->combined_key);
             sdsfree(evict_hash->key);
             dictRelease(evict_hash->field_lru);
+            dictRelease(evict_hash->no_rocks);
             memset(evict_hash, 0, sizeof(*evict_hash));
             return evict_hash;
         }
@@ -1063,6 +1129,8 @@ static void constructEvictHash(evictHash *free_candidate, uint8_t dbid, sds key)
     // combined_key = sdscatlen(combined_key, key, sdslen(key));
     serverAssert(!free_candidate->field_lru);
     free_candidate->field_lru = dictCreate(&fieldLruDictType, NULL);
+    serverAssert(!free_candidate->no_rocks);
+    free_candidate->no_rocks = dictCreate(&pureHashNoRockDictType, NULL);
 
     long long rock_cnt = 0;
     dictIterator *di = dictGetIterator(free_candidate->dict_hash);
@@ -1072,11 +1140,17 @@ static void constructEvictHash(evictHash *free_candidate, uint8_t dbid, sds key)
         uint64_t clock = LRU_CLOCK();
         dictAdd(free_candidate->field_lru, field, (void*)clock);    // field_lru use the same field with dict_hash 
         sds val = dictGetVal(de);
-        if (val == shared.hashRockVal) ++rock_cnt;
+        if (val == shared.hashRockVal) {
+            ++rock_cnt;
+        } else {
+            int ret = dictAdd(free_candidate->no_rocks, field, 0);        // no_rocks use the same field with dict_hash
+            serverAssert(ret == DICT_OK);
+        }
     }
     dictReleaseIterator(di);
     free_candidate->key = sdsdup(key);
     free_candidate->rock_cnt = rock_cnt;
+    serverAssert(rock_cnt == (long long)dictSize(free_candidate->dict_hash) - (long long)dictSize(free_candidate->no_rocks));
     free_candidate->used = 1;
 }
 
@@ -1208,7 +1282,7 @@ void debugEvictCommand(client *c) {
         serverLog(LL_WARNING, "===== before evcition ===========");
         debugReportMemAndHash();
         serverLog(LL_WARNING, "===== after evcition ===========");
-        int res = performKeyOfPureHashEvictions(0, 0);
+        int res = performKeyOfPureHashEvictions(0, 0, NULL);
         char *str_res;
         switch(res) {
         case EVICT_ROCK_ENOUGH_MEM: str_res = "EVICT_ROCK_ENOUGH_MEM"; break;

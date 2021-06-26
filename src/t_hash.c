@@ -261,6 +261,10 @@ int hashTypeSet(int dbid, sds key, robj *o, sds field, sds value, int flags) {
                 if (dictGetVal(de) == shared.hashRockVal) {
                     serverAssert(evict_hash->rock_cnt);
                     --evict_hash->rock_cnt;
+                } else {
+                    // NOTE: use the same field in pure hash
+                    int ret = dictAdd(evict_hash->no_rocks, dictGetKey(de), 0);
+                    serverAssert(ret == DICT_OK);
                 }
             }
             sdsfree(dictGetVal(de));
@@ -290,6 +294,7 @@ int hashTypeSet(int dbid, sds key, robj *o, sds field, sds value, int flags) {
             if (evict_hash) {
                 uint64_t clock = LRU_CLOCK();
                 dictAdd(evict_hash->field_lru, f, (void*)clock);
+                dictAdd(evict_hash->no_rocks, f, 0);
             } 
         }
     } else {
@@ -357,6 +362,9 @@ int hashTypeDelete(int dbid, sds key, robj *o, sds field) {
                 if (is_rock) {
                     serverAssert(evict_hash->rock_cnt);
                     --evict_hash->rock_cnt;
+                } else {
+                    ret = dictDelete(evict_hash->no_rocks, field);
+                    serverAssert(ret == DICT_OK);
                 }
             }
         }

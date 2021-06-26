@@ -1199,6 +1199,7 @@ typedef struct evictHash {
     sds key;
     dict *field_lru;
     dict *dict_hash;     // point to the hash dictionary
+    dict *no_rocks;
     long long rock_cnt;
 } evictHash;
 

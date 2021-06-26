@@ -990,6 +990,9 @@ static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, s
         if (evict_hash) {
             serverAssert(evict_hash->rock_cnt > 0);
             --evict_hash->rock_cnt;
+            // NOTE: use the same field of pure hash
+            int ret = dictAdd(evict_hash->no_rocks, dictGetKey(de_hash), 0);     
+            serverAssert(ret == DICT_OK);
         }
 
         sdsfree(hash_key);
