@@ -1817,15 +1817,20 @@ static void* entryInConsumerThread(void *arg) {
             }
         } else {
             // report progress of startup
+            static int consumer_wait_cnt = 0;
+            if (zmalloc_used_memory() > server.bunnymem) {
+                if (consumer_wait_cnt == 0)
+                    serverLog(LL_NOTICE, "memory over limit while startup, waiting for background job to evict some memeory");
+                while (zmalloc_used_memory() > server.bunnymem) {     
+                    usleep(10*1000);
+                }
+                if (consumer_wait_cnt == 0)
+                    serverLog(LL_NOTICE, "startup can contnue with some memory evicted to RocksDB...");
+                ++consumer_wait_cnt;
+                consumer_wait_cnt %= 16;
+            }
             int64_t processed_cnt = cur_offset - lo_offset + 1;
             int percentage = (int)(processed_cnt * 100 / total_resume_cnt);
-            if (zmalloc_used_memory() > server.bunnymem) {
-                while (zmalloc_used_memory() > server.bunnymem) {
-                    serverLog(LL_NOTICE, "memory over limit while startup, waiting for 1 second to evict some memeory");
-                    usleep(1000*1000);
-                }
-                serverLog(LL_NOTICE, "startup can contnue with some memory evicted to RocksDB...");
-            }
             if (processed_cnt % 50000 == 0) {
                 serverLog(LL_NOTICE, "consumer thread is resuming Kafka log, processed count = %ld(%d%%), latency = %lu(ms)",
                           processed_cnt, percentage, elapsedMs(startupCheckTimer));
