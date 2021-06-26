@@ -563,7 +563,7 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree,
             }
 
             /* No insert keys and pool is empty skip evict. */
-            if (total_keys == 0 && pool[0].key == NULL) break; 
+            if (total_keys == 0 && pool[0].key == NULL) return EVICT_ROCK_FREE; 
 
             /* Go backward from best to worst element to evict. */
             for (k = EVPOOL_SIZE-1; k >= 0; k--) {
@@ -733,7 +733,7 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t
             /* No insert keys and pool is empty, skip to evict. */
             if (total_keys == 0 && pool[0].field == NULL) {
                 can_not_free = 1;
-                break;
+                return EVICT_ROCK_FREE;
             } 
 
             /* Go backward from best to worst element to evict. */
@@ -823,7 +823,7 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t
     }
 
     if (real_free) *real_free = mem_freed > 0 ? mem_freed : 0;
-    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;
+    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;    
 }
 
 /* We have two choice of eviction, key (include hash with ziplist) or pure hash. We try randomly to use one. 
@@ -981,8 +981,7 @@ int checkMemInProcessBuffer(client *c) {
 }
 
 /* cron job to make some room to avoid the forbidden command due to memory limit */
-// #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
-#define FREE_LOWER_BOUND 10<<20
+#define FREE_LOWER_BOUND 1<<20
 #define FREE_UPPER_BOUND 50<<20
 void cronEvictToMakeRoom() {
     size_t used = zmalloc_used_memory();
@@ -1025,8 +1024,13 @@ void cronEvictToMakeRoom() {
         serverAssert(res == EVICT_ROCK_TIMEOUT);
         if (over_pencentage_cnt == 0) {
             // if Hz 50, so 2 seconds report once
-            serverLog(LL_WARNING, "memory is over limit. I have evicted %lu(k), but need do more in future...",
-                      total_free_in_cron/1024);
+            if (total_free_in_cron < 1024) {
+                serverLog(LL_WARNING, "memory is over limit. I have evicted %lu, but need do more in future...",
+                        total_free_in_cron);
+            } else {
+                serverLog(LL_WARNING, "memory is over limit. I have evicted %lu(k), but need do more in future...",
+                        total_free_in_cron/1024);
+            }
             total_free_in_cron = 0;
         }
     }
