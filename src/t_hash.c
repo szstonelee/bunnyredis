@@ -262,9 +262,9 @@ int hashTypeSet(int dbid, sds key, robj *o, sds field, sds value, int flags) {
                     serverAssert(evict_hash->rock_cnt);
                     --evict_hash->rock_cnt;
                 } else {
-                    // NOTE: use the same field in pure hash
-                    int ret = dictAdd(evict_hash->no_rocks, dictGetKey(de), 0);
-                    serverAssert(ret == DICT_OK);
+                    // NOTE1: use the same field in pure hash
+                    // NOTE2: maybe exist in no_rocks (overwrite)
+                    dictAdd(evict_hash->no_rocks, dictGetKey(de), 0);
                 }
             }
             sdsfree(dictGetVal(de));
