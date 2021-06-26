@@ -507,15 +507,11 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree,
     size_t mem_tofree;
     long long mem_freed; /* May be negative */
     long long delta;
-
-    size_t used = zmalloc_used_memory();
+    
     if (must_do) {
-        if (used >= server.bunnymem) {
-            mem_tofree = used - server.bunnymem > must_tofree ? used - server.bunnymem : must_tofree;
-        } else {
-            mem_tofree = must_tofree;
-        }
+        mem_tofree = must_tofree;
     } else {
+        size_t used = zmalloc_used_memory();
         if(used <= server.bunnymem) 
             return EVICT_ROCK_FREE;
 
