@@ -600,8 +600,7 @@ static void initRocksdb() {
     // WAL
     // rocksdb_options_set_manual_wal_flush(options, 1);    // current RocksDB API 6.20.3 not support
     // compaction (using Universal Compaction)
-    // rocksdb_options_set_compaction_style(options, rocksdb_universal_compaction);
-    rocksdb_options_set_compaction_style(options, rocksdb_level_compaction);
+    rocksdb_options_set_compaction_style(options, rocksdb_universal_compaction);
     rocksdb_options_set_num_levels(options, ROCKSDB_LEVEL_NUM);   
     rocksdb_options_set_level0_file_num_compaction_trigger(options, 4);
     // set each level compression types (reference RocksDB API of compression_type.h)
