@@ -518,6 +518,9 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree,
         mem_tofree = used - server.bunnymem;
     }
 
+    uint64_t timeout_ms = 2;
+    if (is_startup_on_going())  timeout_ms = 10;
+
     mem_freed = 0;
     int timeout = 0;
     monotime evictionTimer;
@@ -625,7 +628,7 @@ static int performKeyOfStringOrZiplistEvictions(int must_do, size_t must_tofree,
             keys_freed++;
         } 
 
-        if (elapsedMs(evictionTimer) >= 2) {        // at most 2-3 ms for eviction
+        if (elapsedMs(evictionTimer) >= timeout_ms) {       
             if (mem_freed < (long long)mem_tofree)
                 timeout = 1;
             break;
@@ -680,19 +683,18 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t
     long long mem_freed; /* May be negative */
     long long delta;
 
-    size_t used = zmalloc_used_memory();
     if (must_do) {
-        if (used >= server.bunnymem) {
-            mem_tofree = used - server.bunnymem > must_tofree ? used - server.bunnymem : must_tofree;
-        } else {
-            mem_tofree = must_tofree;
-        }
+        mem_tofree = must_tofree;
     } else {
+        size_t used = zmalloc_used_memory();
         if(used <= server.bunnymem) 
             return EVICT_ROCK_FREE;
 
         mem_tofree = used - server.bunnymem;
     }
+
+    uint64_t timeout_ms = 2;
+    if (is_startup_on_going())  timeout_ms = 10;
 
     mem_freed = 0;
     int timeout = 0;
@@ -813,7 +815,7 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t
             keys_freed++;
         } 
 
-        if (elapsedMs(evictionTimer) >= 2) {        // at most 2-3 ms for eviction
+        if (elapsedMs(evictionTimer) >= timeout_ms) {        // at most 2-3 ms for eviction
             if (mem_freed < (long long)mem_tofree)
                 timeout = 1;
             break;
@@ -980,7 +982,7 @@ int checkMemInProcessBuffer(client *c) {
 
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 // #define ENOUGH_MEM_SPACE 50<<20         // if we have enought free memory of 50M, do not need to evict
-#define FREE_LOWER_BOUND 5<<20
+#define FREE_LOWER_BOUND 10<<20
 #define FREE_UPPER_BOUND 50<<20
 void cronEvictToMakeRoom() {
     size_t used = zmalloc_used_memory();
