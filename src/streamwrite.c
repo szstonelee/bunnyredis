@@ -1827,7 +1827,7 @@ static void* entryInConsumerThread(void *arg) {
                 if (consumer_wait_cnt == 0)
                     serverLog(LL_NOTICE, "startup can contnue with some memory evicted to RocksDB...");
                 ++consumer_wait_cnt;
-                consumer_wait_cnt %= 16;
+                consumer_wait_cnt %= 128;
             }
             int64_t processed_cnt = cur_offset - lo_offset + 1;
             int percentage = (int)(processed_cnt * 100 / total_resume_cnt);
