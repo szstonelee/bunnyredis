@@ -530,8 +530,10 @@ void set_max_message_bytes(long long set_val) {
             exit(1);
         }
 
-        if (saved >= set_val)
+        if (saved >= set_val) {
+            zookeeper_close(zh);
             return;     // check succesfully
+        }
         
         // otherwise, we need to increase max.message.bytes
         sds set_val_str = sdsfromlonglong(set_val);
@@ -619,8 +621,10 @@ void set_compression_type_for_topic() {
         }
         const char *compression_type_str = json_string_value(compression_type);
 
-        if (strcasecmp(compression_type_str, "lz4") == 0)
+        if (strcasecmp(compression_type_str, "lz4") == 0) {
+            zookeeper_close(zh);
             return;     // check succesfully
+        }
 
         // otherwise, we need to update topic compression type to lz4
         int ret = json_string_set(compression_type, "lz4");
