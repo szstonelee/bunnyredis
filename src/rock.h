@@ -16,6 +16,7 @@ list* stringGenericGetMultiKeysForRock(client *c, int start_index, int step);
 
 
 /* API */
+size_t get_rock_write_queue_len();
 void checkAndSetRockKeyNumber(client *c, const int is_stream_write);
 void initRockWrite();
 void initRockPipeAndRockRead();

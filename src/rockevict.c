@@ -983,10 +983,16 @@ int checkMemInProcessBuffer(client *c) {
 /* cron job to make some room to avoid the forbidden command due to memory limit */
 #define FREE_LOWER_BOUND 1<<20
 #define FREE_UPPER_BOUND 50<<20
+#define ROCK_WRITE_QUUEE_BOUND  100<<10
 void cronEvictToMakeRoom() {
     size_t used = zmalloc_used_memory();
     if (used <= server.bunnymem) 
         return;    
+
+    // Check rock write queue, if too long, we does need to evict anything
+    // because write queue is for make room of memory but need to be finished first
+    size_t write_len = get_rock_write_queue_len();
+    if (write_len > ROCK_WRITE_QUUEE_BOUND) return;
 
     size_t delta = used - server.bunnymem;
     size_t must_free;

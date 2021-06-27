@@ -1380,3 +1380,12 @@ list* hGenericGetOneKeyOfZiplistForRock(client *c) {
         return NULL;
     }
 }
+
+/* for Mainthread other module, e.g., rockevict cron job  */
+size_t get_rock_write_queue_len() {
+    size_t len;
+    lockRockWrite();
+    len = listLength(write_queue);
+    unlockRockWrite();
+    return len;
+}
