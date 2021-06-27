@@ -2343,8 +2343,6 @@ static int is_kafka_in_same_machine() {
 
     freeifaddrs(ifaddr);
 
-    serverLog(LL_WARNING, "is_kafka_in_same_machine() found = %d", found);
-
     return found;
 }
 
@@ -2354,6 +2352,7 @@ static int is_kafka_in_same_machine() {
 #define KAFKA_SERVER_MIN_MEM    (1500<<20)      // We assume Kafka Server use 1.5G
 #define ROCKSDB_MIN_MEM         (2000<<20)      // We assume RocksDB use 1.5G
 #define OTHER_MIN_MEM           (500<20)        // We assume other mem usage (e.g. Kafka Client)
+#define SAFE_RESERVE_MEM         (300<20)        // We ressrve some safe room 
 
 /* We allow user defined bunny mem to more space (if you want to test your machine) */
 int check_user_defined_bunny_mem_valid(size_t check) {
@@ -2387,14 +2386,18 @@ size_t get_default_bunny_mem() {
     }
 
     int has_kafak_server = is_kafka_in_same_machine();
-    size_t least_work_fine_mem = (size_t)OS_MIN_MEM + (size_t)OTHER_MIN_MEM + (size_t)ROCKSDB_MIN_MEM + (size_t)(has_kafak_server ? KAFKA_SERVER_MIN_MEM : 0);
+    size_t least_work_fine_mem = (size_t)OS_MIN_MEM + 
+                                 (size_t)OTHER_MIN_MEM + 
+                                 (size_t)ROCKSDB_MIN_MEM + 
+                                 (size_t)SAFE_RESERVE_MEM +
+                                 (size_t)(has_kafak_server ? KAFKA_SERVER_MIN_MEM : 0);
     if (least_work_fine_mem > server.system_memory_size) {
         serverLog(LL_WARNING, "Calculating the default bunnymem failed. Set bunnymem to the minimum memory = %d. Your system memory = %lu.%s",
                   MIN_BUNNY_MEMORY_SIZE, server.system_memory_size, has_kafak_server ? " NOTE: we found Kafak is running the same machine" : "");
         return  MIN_BUNNY_MEMORY_SIZE;
     }
 
-    return server.system_memory_size - OS_MIN_MEM - ROCKSDB_MIN_MEM - (has_kafak_server ? KAFKA_SERVER_MIN_MEM : 0);
+    return server.system_memory_size - OS_MIN_MEM - ROCKSDB_MIN_MEM - SAFE_RESERVE_MEM - (has_kafak_server ? KAFKA_SERVER_MIN_MEM : 0);
 }
 
 static int updateBunnymem(long long val, long long prev, const char **err) {
