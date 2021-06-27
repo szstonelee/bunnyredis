@@ -33,6 +33,8 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <netdb.h>
+#include <ifaddrs.h>
 
 /*-----------------------------------------------------------------------------
  * Config file name-value maps.
@@ -2300,18 +2302,114 @@ static int updateMaxmemory(long long val, long long prev, const char **err) {
 }
 */
 
+static int get_zk_ip_pos() {
+    for (size_t i = 0; i < strlen(server.zk_server); ++i) {
+        if (server.zk_server[i] == ':') return (int)i;
+    }
+    return -1;
+}
+
+/* We check kafka is in the same machine by checking server.zk_server prefix is "127.0.0.1" or the local IP */
+static int is_kafka_in_same_machine() {
+    int zk_ip_len = get_zk_ip_pos();
+    if (zk_ip_len == -1) return 0;
+
+    struct ifaddrs *ifaddr;
+    int family, s;
+    char host[NI_MAXHOST];
+
+    getifaddrs(&ifaddr);
+
+    int found = 0;
+    for (struct ifaddrs *ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL)  
+            continue;
+
+        family = ifa->ifa_addr->sa_family;
+        if (family == AF_INET) {        
+            // only support IP4
+            s = getnameinfo(ifa->ifa_addr,
+                            sizeof(struct sockaddr_in),
+                            host, NI_MAXHOST,
+                            NULL, 0, NI_NUMERICHOST);
+            if (s == 0 && strlen(host) == (size_t)zk_ip_len) {
+                if (memcmp(host, server.zk_server, zk_ip_len) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+    }
+
+    freeifaddrs(ifaddr);
+
+    serverLog(LL_WARNING, "is_kafka_in_same_machine() found = %d", found);
+
+    return found;
+}
+
+/* We need to  check whether bunny mem init value is valid */
+#define MIN_BUNNY_MEMORY_SIZE   (10<<20)
+#define OS_MIN_MEM              (500<<20)       // We assume OS use 0.5G
+#define KAFKA_SERVER_MIN_MEM    (1500<<20)      // We assume Kafka Server use 1.5G
+#define ROCKSDB_MIN_MEM         (2000<<20)      // We assume RocksDB use 1.5G
+#define OTHER_MIN_MEM           (500<20)        // We assume other mem usage (e.g. Kafka Client)
+
+/* We allow user defined bunny mem to more space (if you want to test your machine) */
+int check_user_defined_bunny_mem_valid(size_t check) {
+    if (OS_MIN_MEM + OTHER_MIN_MEM > server.system_memory_size) {
+        serverLog(LL_WARNING, "check_bunny_mem_valid() warning! The system memory = %lu is too low!",
+                  server.system_memory_size);
+        return 0;
+    }
+
+    if (check < MIN_BUNNY_MEMORY_SIZE) {
+        serverLog(LL_WARNING, "check_bunny_mem_valid() warning! bunnymem = %lu is too low than config minimum = %d",
+                  check, MIN_BUNNY_MEMORY_SIZE);
+        return 0;
+    }
+
+    if (check > server.system_memory_size) {
+        serverLog(LL_WARNING, "check_bunny_mem_valid() warning! bunnymem = %lu is higher than system memory = %lu",
+                  check, server.system_memory_size);
+        return 0;
+    }
+
+    return 1;
+}
+
+/* If default, we set the strict bunnymem policy */
+size_t get_default_bunny_mem() {
+    if (OS_MIN_MEM + OTHER_MIN_MEM > server.system_memory_size) {
+        serverLog(LL_WARNING, "Your machine has too low system memory which = %lu. We need at least %d for the machine.",
+                  server.system_memory_size, OS_MIN_MEM + OTHER_MIN_MEM);
+        exit(1);
+    }
+
+    int has_kafak_server = is_kafka_in_same_machine();
+    size_t least_work_fine_mem = (size_t)OS_MIN_MEM + (size_t)OTHER_MIN_MEM + (size_t)ROCKSDB_MIN_MEM + (size_t)(has_kafak_server ? KAFKA_SERVER_MIN_MEM : 0);
+    if (least_work_fine_mem > server.system_memory_size) {
+        serverLog(LL_WARNING, "Calculating the default bunnymem failed. Set bunnymem to the minimum memory = %d. Your system memory = %lu.%s",
+                  MIN_BUNNY_MEMORY_SIZE, server.system_memory_size, has_kafak_server ? " NOTE: we found Kafak is running the same machine" : "");
+        return  MIN_BUNNY_MEMORY_SIZE;
+    }
+
+    return server.system_memory_size - OS_MIN_MEM - ROCKSDB_MIN_MEM - (has_kafak_server ? KAFKA_SERVER_MIN_MEM : 0);
+}
+
 static int updateBunnymem(long long val, long long prev, const char **err) {
     UNUSED(prev);
     UNUSED(err);
 
-    if (val <= 10<<20) {
-        *err = "can not set Bunny memory to nagative value or too low (10 mega bytes as least)!";
+    if (val <= 0) {
+        *err = "User specified bunnmymem can not be negative or zero!";
         return 0;
     }
 
-    size_t used = zmalloc_used_memory();
-    if ((unsigned long long)val < used)
-        serverLog(LL_WARNING, "WARNING: the the new bunnymem set via config set (%llu) is smaller than the current memory usage (%zu).", val, used);
+    if (!check_user_defined_bunny_mem_valid((size_t)val)) {
+        *err = "User specified bunnymem check failed!";
+        return 0;
+    }
 
     return 1;
 }
@@ -2593,7 +2691,7 @@ standardConfig configs[] = {
 
     /* Unsigned Long Long configs */
     // createULongLongConfig("maxmemory", NULL, IMMUTABLE_CONFIG, 0, ULLONG_MAX, server.maxmemory, 0, MEMORY_CONFIG, NULL, updateMaxmemory),
-    createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, MIN_BUNNY_MEMORY_SIZE, ULLONG_MAX, server.bunnymem, MIN_BUNNY_MEMORY_SIZE, MEMORY_CONFIG, NULL, updateBunnymem),
+    createULongLongConfig("bunnymem", NULL, MODIFIABLE_CONFIG, 0, ULLONG_MAX, server.bunnymem, 0, MEMORY_CONFIG, NULL, updateBunnymem),
 
     /* Size_t configs */
     createSizeTConfig("hash-max-ziplist-entries", NULL, MODIFIABLE_CONFIG, 0, LONG_MAX, server.hash_max_ziplist_entries, 512, INTEGER_CONFIG, NULL, NULL),

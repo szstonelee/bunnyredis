@@ -163,7 +163,6 @@ static void get_ip_addresss(char *ip, size_t ip_max_len) {
         exit(1);
     }
 
-
     for (struct ifaddrs *ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
         if (ifa->ifa_addr == NULL)  
             continue;

@@ -1203,8 +1203,6 @@ typedef struct evictHash {
     long long rock_cnt;
 } evictHash;
 
-#define MIN_BUNNY_MEMORY_SIZE   (10<<20)
-
 struct redisServer {
     /* General */
     pid_t pid;                  /* Main process pid. */
@@ -1700,9 +1698,12 @@ struct redisServer {
     int _debug_;
 };
 
+/* Additional API from BunnyRedis */
 client* lookupStreamCurrentClient();
+int check_user_defined_bunny_mem_valid(size_t check);
+size_t get_default_bunny_mem();
 uint64_t dictUint64Hash(const void *key);
-
+int isValidZk(char *val, const char **err);
 
 #define MAX_KEYS_BUFFER 256
 

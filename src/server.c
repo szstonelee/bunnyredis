@@ -3559,10 +3559,6 @@ void initServer(void) {
     /* init client id to client* table */
     server.clientIdTable = dictCreate(&clientIdDictType, NULL);
 
-    // set bunnymem to 80% of physical memory if not set by redis.conf or command arguments
-    if (server.bunnymem == MIN_BUNNY_MEMORY_SIZE)
-        server.bunnymem = server.system_memory_size * 0.8;
-
     // zookeeper init and get node id
     const char *is_valid_zk_err;
     if (!isValidZk(server.zk_server, &is_valid_zk_err)) {
@@ -3575,6 +3571,17 @@ void initServer(void) {
     server.node_id = CONSUMER_STARTUP_NODE_ID;
     server.saved_node_id_in_consumer_startup = node_id;
     atomicSet(kafkaStartupConsumeFinish, CONSUMER_STARTUP_START); 
+
+    // check and set bunnymem
+    if (server.bunnymem == 0) {
+        server.bunnymem = get_default_bunny_mem();
+        serverLog(LL_NOTICE, "Set default bunnymem = %llu", server.bunnymem);
+    } else {
+        if (!check_user_defined_bunny_mem_valid(server.bunnymem)) {
+            serverLog(LL_WARNING, "initServer() failed for incorrect user defined bunnymem = %llu", server.bunnymem);
+            exit(1);
+        }
+    }
 
     /* stream write producer init. NOTE: must before consumer init because main thread need it to check kafka state */
     initKafkaProducer();
