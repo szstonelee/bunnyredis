@@ -747,18 +747,29 @@ static void readFromWriteQueueFirstInReadThread(const size_t task_cnt, sds const
     sds write_rock_key;
     sds copy_val;
 
+    static int first_avoid_warning = 1;
+
     lockRockWrite();
+
+    write_queue_len = listLength(write_queue);
     for (size_t i = 0; i < task_cnt; ++i) {
         read_rock_key = task_rock_keys[i];
-        listRewind(write_queue, &li);
+        
         // We assume the write_queue is short enough
-        write_queue_len = listLength(write_queue);
         if (write_queue_len > ROCK_WRITE_QUEUE_TOO_LONG) {
             int consume_startup;
             atomicGet(kafkaStartupConsumeFinish, consume_startup);
-            if (consume_startup == CONSUMER_STARTUP_OPEN_TO_CLIENTS)
-                serverLog(LL_WARNING, "write queue of Rock is too long, len = %lu", write_queue_len);
+            // In startup, we do not log warning
+            if (consume_startup == CONSUMER_STARTUP_OPEN_TO_CLIENTS) {
+                // we avoid the first warning because it may be the remain work length just when startup is over
+                if (!first_avoid_warning)      
+                    serverLog(LL_WARNING, "write queue of Rock is too long, len = %lu", write_queue_len);
+
+                if (write_queue_len == task_cnt) first_avoid_warning = 0;
+            }
         }
+
+        listRewind(write_queue, &li);
         while ((ln = listNext(&li))) {
             write_task = listNodeValue(ln);
             write_rock_key = write_task->rock_key;
@@ -773,6 +784,7 @@ static void readFromWriteQueueFirstInReadThread(const size_t task_cnt, sds const
             }
         }
     }
+
     unlockRockWrite();
 }
 

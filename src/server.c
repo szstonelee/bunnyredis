@@ -2208,13 +2208,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         serverAssert(server.saved_node_id_in_consumer_startup < CONSUMER_STARTUP_NODE_ID);
         server.node_id = server.saved_node_id_in_consumer_startup;
 
-        size_t write_len = get_rock_write_queue_len();
-        size_t sleep_seconds = write_len/256;
-        if (sleep_seconds) {
-            // sleep serveral seconds waiting for the remail rock queue to empty
-            usleep(sleep_seconds*1000*1000);        
-        }
-        
         serverLog(LL_NOTICE, "consumer thread finished resuming enough log from Kafka and BunnyRedis now is open to all clients.");
     }
 
