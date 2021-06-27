@@ -2351,8 +2351,8 @@ static int is_kafka_in_same_machine() {
 #define OS_MIN_MEM              (500<<20)       // We assume OS use 0.5G
 #define KAFKA_SERVER_MIN_MEM    (1500<<20)      // We assume Kafka Server use 1.5G
 #define ROCKSDB_MIN_MEM         (2000<<20)      // We assume RocksDB use 1.5G
-#define OTHER_MIN_MEM           (500<20)        // We assume other mem usage (e.g. Kafka Client)
-#define SAFE_RESERVE_MEM         (300<20)        // We ressrve some safe room 
+#define OTHER_MIN_MEM           (200<<20)        // We assume other mem usage (e.g. Kafka Client)
+#define SAFE_RESERVE_MEM        (300<<20)        // We ressrve some safe room 
 
 /* We allow user defined bunny mem to more space (if you want to test your machine) */
 int check_user_defined_bunny_mem_valid(size_t check) {
