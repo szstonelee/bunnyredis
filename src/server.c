@@ -3575,7 +3575,9 @@ void initServer(void) {
     // check and set bunnymem
     if (server.bunnymem == 0) {
         server.bunnymem = get_default_bunny_mem();
-        serverLog(LL_NOTICE, "Set default bunnymem = %llu", server.bunnymem);
+        serverLog(LL_NOTICE, "------------------------------------------");
+        serverLog(LL_NOTICE, "|-- Set default bunnymem = %llu --|", server.bunnymem);
+        serverLog(LL_NOTICE, "------------------------------------------");
     } else {
         if (!check_user_defined_bunny_mem_valid(server.bunnymem)) {
             serverLog(LL_WARNING, "initServer() failed for incorrect user defined bunnymem = %llu", server.bunnymem);
