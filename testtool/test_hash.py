@@ -8,6 +8,7 @@ field_scope = 10_000
 
 # BunnyRedis node 1
 r1.config_set(name="bunnymem", value=15<<20)
+#r1.config_set(name="bunnymem", value=1<<30)
 r1.config_set(name="bunnydeny", value="no")
 
 # BunnyRedis node 2
@@ -299,5 +300,12 @@ def _main():
     call_with_time(compare_all)
 
 
+def loop_for_debug():
+    for i in range(0, 50):
+        print(f"loop i = {i}")
+        _main()
+
+
 if __name__ == '__main__':
     _main()
+    # loop_for_debug()

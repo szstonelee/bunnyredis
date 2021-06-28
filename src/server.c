@@ -3552,6 +3552,12 @@ void initServer(void) {
     /* Initialize ACL default password if it exists */
     ACLUpdateDefaultUserPassword(server.requirepass);
 
+    /* check THP for BunnyRedis */
+    if (THPIsEnabled()) {
+        serverLog(LL_WARNING, "Please disable THP for BunnyRedis!");
+        exit(1);
+    }
+
     /* init virtual client. NOTE: need to do before the following Kafka initinization because threads */
     server.virtual_client = createClient(NULL);
     server.virtual_client->user = NULL;                // admin user
@@ -5679,7 +5685,6 @@ void linuxMemoryWarnings(void) {
     }
     if (THPIsEnabled() && THPDisable()) {
         serverLog(LL_WARNING,"WARNING you have Transparent Huge Pages (THP) support enabled in your kernel. This will create latency and memory usage issues with Redis. To fix this issue run the command 'echo madvise > /sys/kernel/mm/transparent_hugepage/enabled' as root, and add it to your /etc/rc.local in order to retain the setting after a reboot. Redis must be restarted after THP is disabled (set to 'madvise' or 'never').");
-        exit(1);    // NOTE: BunnyRedis does not like THP
     }
 }
 

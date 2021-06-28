@@ -399,7 +399,8 @@ void addRockWriteTaskOfString(uint8_t dbid, sds key, sds val) {
 
     // modify db->str_zl_norock_keys
     redisDb *db = server.db + dbid;
-    dictDelete(db->str_zl_norock_keys, key);
+    int ret = dictDelete(db->str_zl_norock_keys, key);
+    serverAssert(ret == DICT_OK);
 }
 
 void addRockWriteTaskOfZiplist(uint8_t dbid, sds key, unsigned char *zl) {
@@ -421,7 +422,8 @@ void addRockWriteTaskOfZiplist(uint8_t dbid, sds key, unsigned char *zl) {
 
     // modify db->str_zl_norock_keys
     redisDb *db = server.db + dbid;
-    dictDelete(db->str_zl_norock_keys, key);
+    int ret = dictDelete(db->str_zl_norock_keys, key);
+    serverAssert(ret == DICT_OK);
 }
 
 void addRockWriteTaskOfHash(uint8_t dbid, sds key, sds field, sds val) {
@@ -945,7 +947,8 @@ static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, s
         dictGetVal(de) = recover;
         serverAssert(db->stat_key_str_rockval_cnt);
         --db->stat_key_str_rockval_cnt;
-        dictAdd(db->str_zl_norock_keys, dictGetKey(de), 0); // NOTE: not use key, use the key in db->dict
+        int ret = dictAdd(db->str_zl_norock_keys, dictGetKey(de), 0); // NOTE: not use key, use the key in db->dict
+        serverAssert(ret == DICT_OK);
 
     } else if (type == ROCK_ZIPLIST_TYPE) {
         redisDb *db = server.db+dbid;
@@ -966,7 +969,8 @@ static void recover_val(const uint8_t type, const uint8_t dbid, sds const key, s
         dictGetVal(de) = recover;
         serverAssert(db->stat_key_ziplist_rockval_cnt);
         --db->stat_key_ziplist_rockval_cnt;
-        dictAdd(db->str_zl_norock_keys, dictGetKey(de), 0); // NOTE: not use key, use the key in db->dict  
+        int ret = dictAdd(db->str_zl_norock_keys, dictGetKey(de), 0); // NOTE: not use key, use the key in db->dict  
+        serverAssert(ret == DICT_OK);
 
     } else {
         serverAssert(type == ROCK_HASH_TYPE);
@@ -1205,7 +1209,8 @@ void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, 
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
         } else {
-            dictDelete(db->str_zl_norock_keys, key);
+            int ret = dictDelete(db->str_zl_norock_keys, key);
+            serverAssert(ret == DICT_OK);
         }
 
     } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_ZIPLIST) {
@@ -1215,7 +1220,8 @@ void update_rock_stat_and_try_delete_evict_candidate_for_db_delete(redisDb *db, 
             serverAssert(db->stat_key_ziplist_rockval_cnt);
             --db->stat_key_ziplist_rockval_cnt;
         } else {
-            dictDelete(db->str_zl_norock_keys, key);
+            int ret = dictDelete(db->str_zl_norock_keys, key);
+            serverAssert(ret == DICT_OK);
         }
 
     } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {

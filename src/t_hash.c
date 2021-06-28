@@ -341,25 +341,18 @@ int hashTypeDelete(int dbid, sds key, robj *o, sds field) {
             }
         }
     } else if (o->encoding == OBJ_ENCODING_HT) {
-        int is_rock = 0;
+        // NOTE: we must delete evict_hash (field_lur and no_rocks) first because 
+        //       it relies on the same field of o->ptr, i.e. the real pure hash
         dictEntry *de_hash = dictFind((dict*)o->ptr, field);
         if (de_hash) {
-            if (dictGetVal(de_hash) == shared.hashRockVal)
-                is_rock = 1;
-        }
-        if (dictDelete((dict*)o->ptr, field) == C_OK) {
-            deleted = 1;
-
-            /* Always check if the dictionary needs a resize after a delete. */
-            if (htNeedsResize(o->ptr)) dictResize(o->ptr);
-
-            // delete the lru in pure hash and update rock stat
+            int ret;
+            // delete the lru in pure hash and update rock stat first
             evictHash *evict_hash = NULL;
             if (dbid >= 0) evict_hash = lookupEvictOfHash(dbid, key);
             if (evict_hash) {
-                int ret = dictDelete(evict_hash->field_lru, field);
+                ret = dictDelete(evict_hash->field_lru, field);
                 serverAssert(ret == DICT_OK);
-                if (is_rock) {
+                if (dictGetVal(de_hash) == shared.hashRockVal) {
                     serverAssert(evict_hash->rock_cnt);
                     --evict_hash->rock_cnt;
                 } else {
@@ -367,6 +360,15 @@ int hashTypeDelete(int dbid, sds key, robj *o, sds field) {
                     serverAssert(ret == DICT_OK);
                 }
             }
+
+            deleted = 1;
+
+            // we delete the real hash after the evict hash deletion
+            ret = dictDelete((dict*)o->ptr, field);
+            serverAssert(ret == C_OK);
+
+            /* Always check if the dictionary needs a resize after a delete. */
+            if (htNeedsResize(o->ptr)) dictResize(o->ptr);
         }
     } else {
         serverPanic("Unknown hash encoding");
@@ -562,23 +564,27 @@ void hashTypeConvertZiplist(robj *o, int enc) {
 }
 
 /* NOTE: hashTypeConvert may be called by the real client or others like module or rdb
- * if call from rd or module, dbid < 0 indicating that it does not need update stat of db */
+ * if call from rd or module, dbid < 0 (and key == NULL) indicating that it does not need update stat of db */
 void hashTypeConvert(int dbid, sds key, robj *o, int enc) {
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
-        hashTypeConvertZiplist(o, enc);
-        // NOTE: we need to adjust the stat
+        // NOTE: we need to adjust the stat first
         if (dbid >= 0) {
+            serverAssert(key);
             serverAssert(o->type == OBJ_HASH);
             redisDb *db = server.db + dbid;
             serverAssert(db->stat_key_ziplist_cnt);
             --db->stat_key_ziplist_cnt;
-            if (key)
-                dictDelete(db->str_zl_norock_keys, key);
             if (o == shared.ziplistRockVal) {
                 serverAssert(db->stat_key_ziplist_rockval_cnt);
                 --db->stat_key_ziplist_rockval_cnt;
+            } else {
+                int ret = dictDelete(db->str_zl_norock_keys, key);
+                serverAssert(ret == DICT_OK);
             }
         }
+        // We must call the translation from ziplist to pure hash of o later
+        hashTypeConvertZiplist(o, enc);
+
     } else if (o->encoding == OBJ_ENCODING_HT) {
         serverPanic("Not implemented");
     } else {

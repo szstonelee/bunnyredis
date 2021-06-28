@@ -10,6 +10,7 @@ from test_db import get_random_dbid as db_get_random_dbid
 
 
 r1.config_set(name="bunnymem", value=50<<20)
+#r1.config_set(name="bunnymem", value=1<<30)
 r1.config_set(name="bunnydeny", value="no")
 r2.config_set(name="bunnymem", value=1<<30)
 
@@ -78,6 +79,8 @@ def test_multi_exec(times):
 
 
 def _main():
+    #for i in range(0, 50):
+    #print(f"main loop in {i}")
     flush_all_db()
     call_with_time(inject_string)
     call_with_time(inject_hash)

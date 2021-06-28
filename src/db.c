@@ -275,7 +275,8 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
             serverAssert(db->stat_key_str_rockval_cnt);
             --db->stat_key_str_rockval_cnt;
         } else {
-            dictDelete(db->str_zl_norock_keys, key->ptr);
+            int ret = dictDelete(db->str_zl_norock_keys, key->ptr);
+            serverAssert(ret == DICT_OK);
         }
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_ZIPLIST) {
         serverAssert(db->stat_key_ziplist_cnt);
@@ -284,7 +285,8 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
             serverAssert(db->stat_key_ziplist_rockval_cnt);
             --db->stat_key_ziplist_rockval_cnt;
         } else {
-            dictDelete(db->str_zl_norock_keys, key->ptr);
+            int ret = dictDelete(db->str_zl_norock_keys, key->ptr);
+            serverAssert(ret == DICT_OK);
         }
 
     } else if (old->type == OBJ_HASH && old->encoding == OBJ_ENCODING_HT) {
