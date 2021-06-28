@@ -52,6 +52,13 @@ if test -f /sys/kernel/mm/transparent_hugepage/enabled; then
 fi
 ```
 
+## CentOS 8 bootup 取消THP
+
+CentOS 8比较特殊，上面的方法不起作用，用下面的语句
+```
+grub2-editenv - set "$(grub2-editenv - list | grep kernelopts) transparent_hugepage=never"
+```
+
 # 启用Linux Swap
 
 和Redis一样，建议设置OS Swap
