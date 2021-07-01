@@ -17,7 +17,7 @@ java -version
 
 如果没有安装Java，可以用下面的命令安装Java
 
-## Insstall Java For CentOS
+## Install Java For CentOS
 ```
 sudo yum update
 sudo yum install java-1.8.0-openjdk -y
@@ -54,4 +54,4 @@ bin/zookeeper-server-start.sh config/zookeeper.properties
 bin/kafka-server-start.sh config/server.properties
 ```
 
-以上没有报错，就说明Kafka成功了，[下面我们就可以安装和运行Bunny Redis](install_bunny_redis.md)
+以上没有报错，就说明Kafka成功了，[下面我们就可以安装和运行Bunny Redis](install.md)

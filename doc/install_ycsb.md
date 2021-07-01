@@ -73,6 +73,7 @@ python3 pre_inject_for_ycsb.py 127.0.0.1 6379 0 10000000 10
 4. 由于recordcount大时，operation也大，导致测试时间过长，使得zipfian测试变得不可能。如果缩减redocount，那么OS Page Cache将变得很大，使得读盘的测试变得不真实。
 5. 所以，用替代测试，即用uniform来测试，然后调整recordcount，让其大小超过内存中存储的数量一定比例，达到测试效果
 6. 如果BunnyRedis用startup recover启动后，占用内存会很大，可能会比启动再注入要多1G
+7. 如果bunny-redis是用static模式编译的，将需要更多的内存，所以需要针对static文件合理分配bunnymem，保证一定内存给OS和Page Cache，我个人觉得至少OS+Page Cache要有1G，最好在1.5G-2G之间
 
 ```
 ./bin/ycsb run redis -P workloads/workloadb -p redis.host=localhost -p redis.port=6379 -p updateproportion=0 -p recordcount=400000 -p operationcount=400000 -p threadcount=1
