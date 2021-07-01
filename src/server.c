@@ -3554,7 +3554,7 @@ void initServer(void) {
 
     /* check THP for BunnyRedis */
     if (THPIsEnabled()) {
-        serverLog(LL_WARNING, "Please disable THP for BunnyRedis!");
+        serverLog(LL_WARNING, "Please disable THP for BunnyRedis! Tip: sudo echo never > /sys/kernel/mm/transparent_hugepage/enabled");
         exit(1);
     }
 

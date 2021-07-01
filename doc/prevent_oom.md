@@ -14,26 +14,26 @@
 
 ## 检查THP是否正在起作用
 
+对于一般Linux
+```
+cat /sys/kernel/mm/transparent_hugepage/enabled
+```
+
 对于Enterprise Linux 
 ```
 cat /sys/kernel/mm/redhat_transparent_hugepage/enabled
 ```
 
-对于其他Linux
-```
-cat /sys/kernel/mm/transparent_hugepage/enabled
-```
-
 ## 正在运行的Linux设置取消THP并立即生效
 
 ```
-sudo echo never > /sys/kernel/mm/redhat_transparent_hugepage/enabled
+sudo echo never > /sys/kernel/mm/transparent_hugepage/enabled
 ```
 
 Or
 
 ```
-sudo echo never > /sys/kernel/mm/transparent_hugepage/enabled
+sudo echo never > /sys/kernel/mm/redhat_transparent_hugepage/enabled
 ```
 
 ## 设置机器启动(OS boot)后自动取消THP
