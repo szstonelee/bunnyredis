@@ -4654,7 +4654,7 @@ int prepareForShutdown(int flags) {
     /* Close the listening sockets. Apparently this allows faster restarts. */
     closeListeningSockets(1);
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
-        server.sentinel_mode ? "Sentinel" : "Redis");
+        server.sentinel_mode ? "Sentinel" : "BunnyRedis");
 
     // serverLog(LL_NOTICE, "close rocksdb in %s",getRockdbPath());
     // We do not need waste time to close db

@@ -295,7 +295,7 @@ REDIS_CLI_OBJ=anet.o adlist.o dict.o redis-cli.o zmalloc.o release.o ae.o crcspe
 #REDIS_CHECK_RDB_NAME=redis-check-rdb$(PROG_SUFFIX)
 #REDIS_CHECK_AOF_NAME=redis-check-aof$(PROG_SUFFIX)
 
-all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_RDB_NAME) $(REDIS_CHECK_AOF_NAME)
+all: $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME)
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
 	@echo ""
@@ -347,6 +347,9 @@ $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
 FINAL_STATIC_LIBS :=  /usr/local/lib/libjansson.a /usr/local/lib/libzookeeper_mt.a /usr/local/lib/librdkafka-static.a /usr/lib/x86_64-linux-gnu/libuuid.a /usr/local/lib/libsasl2.a -l:libcrypto.a -l:librocksdb.a -lstdc++
 $(REDIS_SERVER_NAME_IN_STATIC): $(REDIS_SERVER_OBJ)
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_STATIC_LIBS) $(FINAL_LIBS) -lz -l:libsnappy.a -l:libzstd.a  -l:liblz4.a -l:libbz2.a -l:libgflags.a  -l:libcap.a -l:libstdc++.a -l:libm.a -l:librt.a
+
+#$(REDIS_SERVER_NAME_IN_STATIC): $(REDIS_SERVER_OBJ)
+#        $(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -l:liblz4.a -l:libgflags.a -lstdc++ -l:libjansson.a -l:librocksdb.a -l:librdkafka.a -l:libzookeeper_mt.a -l:libuuid.a
 
 # redis-cli
 $(REDIS_CLI_NAME): $(REDIS_CLI_OBJ)

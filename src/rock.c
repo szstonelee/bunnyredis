@@ -1,5 +1,3 @@
-#define USE_STATIC_LIBRARY_FOR_BUNNY
-
 
 #include "server.h"
 #include "rock.h"
@@ -9,9 +7,6 @@
 #include "assert.h"
 #include <rocksdb/c.h>
 #include <ftw.h>
-#ifndef USE_STATIC_LIBRARY_FOR_BUNNY
-#include <libexplain/mkdir.h>
-#endif
 
 
 #define ROCKSDB_LEVEL_NUM   7
@@ -575,13 +570,7 @@ static void initRocksdb() {
             // folder not exist
             rek_mkdir(server.bunny_rockdb_path);
         } else {
-#ifdef USE_STATIC_LIBRARY_FOR_BUNNY
-            serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d", 
-                      server.bunny_rockdb_path, errno);
-#else
-            serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d, reason = %s", 
-                      server.bunny_rockdb_path, errno, explain_errno_mkdir(errno, server.bunny_rockdb_path, mode));
-#endif
+            serverLog(LL_WARNING, "Can not mkdir %s with mode 777, errno = %d",  server.bunny_rockdb_path, errno);
             exit(1);
         }
     }
