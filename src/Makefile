@@ -286,14 +286,9 @@ endif
 
 REDIS_SERVER_NAME=bunny-redis$(PROG_SUFFIX)
 REDIS_SERVER_NAME_IN_STATIC=static-public-bunny-redis$(PROG_SUFFIX)
-#REDIS_SENTINEL_NAME=redis-sentinel$(PROG_SUFFIX)
 REDIS_SERVER_OBJ=adlist.o quicklist.o ae.o anet.o dict.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o crc16.o endianconv.o slowlog.o scripting.o bio.o rio.o rand.o memtest.o crcspeed.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o redis-check-rdb.o redis-check-aof.o geo.o lazyfree.o module.o evict.o expire.o geohash.o geohash_helper.o childinfo.o defrag.o siphash.o rax.o t_stream.o listpack.o localtime.o lolwut.o lolwut5.o lolwut6.o acl.o gopher.o tracking.o connection.o tls.o sha256.o timeout.o setcpuaffinity.o monotonic.o mt19937-64.o rock.o streamwrite.o rockevict.o zk.o
 REDIS_CLI_NAME=redis-cli$(PROG_SUFFIX)
 REDIS_CLI_OBJ=anet.o adlist.o dict.o redis-cli.o zmalloc.o release.o ae.o crcspeed.o crc64.o siphash.o crc16.o monotonic.o cli_common.o mt19937-64.o
-#REDIS_BENCHMARK_NAME=redis-benchmark$(PROG_SUFFIX)
-#REDIS_BENCHMARK_OBJ=ae.o anet.o redis-benchmark.o adlist.o dict.o zmalloc.o release.o crcspeed.o crc64.o siphash.o crc16.o monotonic.o cli_common.o mt19937-64.o
-#REDIS_CHECK_RDB_NAME=redis-check-rdb$(PROG_SUFFIX)
-#REDIS_CHECK_AOF_NAME=redis-check-aof$(PROG_SUFFIX)
 
 all: $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME)
 	@echo ""
@@ -341,15 +336,10 @@ endif
 
 # redis-server
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -lz -llz4 -lrdkafka -luuid -lrocksdb -lzookeeper_mt -ljansson -lstdc++
+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -ljansson -lrocksdb -llz4 -lrdkafka -lzookeeper_mt -luuid -lstdc++
 
-# FINAL_STATIC_LIBS=/usr/local/lib/libjansson.a /usr/local/lib/libhashtable.a 
-FINAL_STATIC_LIBS :=  /usr/local/lib/libjansson.a /usr/local/lib/libzookeeper_mt.a /usr/local/lib/librdkafka-static.a /usr/lib/x86_64-linux-gnu/libuuid.a /usr/local/lib/libsasl2.a -l:libcrypto.a -l:librocksdb.a -lstdc++
 $(REDIS_SERVER_NAME_IN_STATIC): $(REDIS_SERVER_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_STATIC_LIBS) $(FINAL_LIBS) -lz -l:libsnappy.a -l:libzstd.a  -l:liblz4.a -l:libbz2.a -l:libgflags.a  -l:libcap.a -l:libstdc++.a -l:libm.a -l:librt.a
-
-#$(REDIS_SERVER_NAME_IN_STATIC): $(REDIS_SERVER_OBJ)
-#        $(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -l:liblz4.a -l:libgflags.a -lstdc++ -l:libjansson.a -l:librocksdb.a -l:librdkafka.a -l:libzookeeper_mt.a -l:libuuid.a
+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -l:liblz4.a -l:libgflags.a -l:libjansson.a -l:librocksdb.a -l:librdkafka.a -l:libzookeeper_mt.a -l:libuuid.a -lstdc++
 
 # redis-cli
 $(REDIS_CLI_NAME): $(REDIS_CLI_OBJ)
