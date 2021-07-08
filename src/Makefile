@@ -336,7 +336,7 @@ endif
 
 # redis-server
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -ljansson -lrocksdb -llz4 -lrdkafka -lzookeeper_mt -luuid -lstdc++
+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -ljansson -l:librocksdb.a -llz4 -l:librdkafka.a -l:libzookeeper_mt.a -luuid -lstdc++
 
 $(REDIS_SERVER_NAME_IN_STATIC): $(REDIS_SERVER_OBJ)
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS) -l:liblz4.a -l:libgflags.a -l:libjansson.a -l:librocksdb.a -l:librdkafka.a -l:libzookeeper_mt.a -l:libuuid.a -lstdc++
