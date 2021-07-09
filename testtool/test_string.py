@@ -9,7 +9,7 @@ r1: redis.StrictRedis
 r2: redis.StrictRedis
 
 
-def inject():
+def inject(r: redis.StrictRedis, r1: redis.StrictRedis):
     # Need to see the rock value exist in BunnyRedis
     print(f"start to inject string, key_scope = {key_scope}")
     for i in range(0, key_scope):
@@ -335,7 +335,7 @@ def _main():
     config_redis()
 
     flush_all_db()
-    call_with_time(inject)
+    call_with_time(inject, r, r1)
     call_with_time(compare_all)
     call_with_time(test_decr, 10_000)
     call_with_time(compare_all)

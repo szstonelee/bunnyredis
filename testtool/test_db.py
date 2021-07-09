@@ -200,8 +200,8 @@ def _main():
     config_redis()
 
     flush_all_db()
-    call_with_time(inject_string)
-    call_with_time(inject_hash)
+    call_with_time(inject_string, r, r1)
+    call_with_time(inject_hash, r, r1)
     call_with_time(compare_all)
     call_with_time(test_move, 100)
     call_with_time(compare_all)

@@ -11,7 +11,7 @@ r1: redis.StrictRedis
 r2: redis.StrictRedis
 
 
-def inject():
+def inject(r: redis.StrictRedis, r1: redis.StrictRedis):
     # Need to see the rock value exist in BunnyRedis
     print(f"start to inject hash, key_scope = {key_scope}, field_scope = {field_scope}")
     keys = []
@@ -265,7 +265,7 @@ def _main():
     config_redis()
 
     flush_all_db()
-    call_with_time(inject)
+    call_with_time(inject, r, r1)
     call_with_time(compare_all)
     call_with_time(test_hexists, 10_000)
     call_with_time(test_hgetall, 10_000)
