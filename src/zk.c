@@ -401,8 +401,9 @@ void check_or_set_offset(int64_t offset) {
                       offset_znode, server.zk_server, buf_len);
             exit(1);
         }
-        int64_t saved_offset = intrev64ifbe(*(int64_t*)((unsigned char*)buffer));
-        if (offset != saved_offset) {
+        unsigned char *p = (unsigned char *)buffer;
+        uint64_t saved_offset = intrev64ifbe(*(uint64_t*)p);
+        if (offset != (int64_t)saved_offset) {
             serverLog(LL_WARNING, "check_or_set_offset() failed for not same offset, znode = %s, zk_server = %s, offset = %ld, saved_offset = %ld", 
                       offset_znode, server.zk_server, offset, saved_offset);
             exit(1);
