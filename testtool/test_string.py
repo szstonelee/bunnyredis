@@ -1,13 +1,12 @@
 import string
 import random
 from test_common import *
-
-
-r1.config_set(name="bunnymem", value=20<<20)
-r1.config_set(name="bunnydeny", value="no")
-r2.config_set(name="bunnymem", value=200<<20)
+import sys
 
 key_scope = 50_000
+r: redis.StrictRedis
+r1: redis.StrictRedis
+r2: redis.StrictRedis
 
 
 def inject():
@@ -36,9 +35,7 @@ def test_append(times):
         res1 = r1.append(key=key, value=append_val)
         if res != res1:
             print(f"append failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_bitcount(times):
@@ -50,9 +47,7 @@ def test_bitcount(times):
         res1 = r1.bitcount(key=key, start=start, end=end)
         if res != res1:
             print(f"bitcount failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_bitfield(times):
@@ -68,23 +63,21 @@ def test_bitfield(times):
             res1 = bf1.get(fmt=type, offset=offset).execute()
             if res != res1:
                 print(f"bitfield get failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
+                sys.exit("failed")
         elif dice == 1:  #SET
             val = random.randint(0, 100)
             res = bf.set(fmt=type, offset=offset, value=val).execute()
             res1 = bf1.set(fmt=type, offset=offset, value=val).execute()
             if res != res1:
                 print(f"bitfield set failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
+                sys.exit("failed")
         else:   #INCRBY
             increment = random.randint(0, 100)
             res = bf.incrby(fmt=type, offset=offset, increment=increment).execute()
             res1 = bf1.incrby(fmt=type, offset=offset, increment=increment).execute()
             if res != res1:
                 print(f"bitfield incrby failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
-
-    return True
+                sys.exit("failed")
 
 
 def test_bitop(times):
@@ -105,9 +98,7 @@ def test_bitop(times):
             res = r.bitop(op, dest_key, keys[0])
         if res != res1:
             print(f"bitop failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_bitpos(times):
@@ -120,9 +111,7 @@ def test_bitpos(times):
         res1 = r1.bitpos(key=key, bit=bit, start=start, end=end)
         if res != res1:
             print(f"bitpos failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_decr(times):
@@ -141,9 +130,7 @@ def test_decr(times):
             res = r.decr(name=key, amount=1)
             if res != res1:
                 print(f"decr failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
-
-    return True
+                sys.exit("failed")
 
 
 def test_get(times):
@@ -153,9 +140,7 @@ def test_get(times):
         res1 = r1.get(key)
         if res != res1:
             print(f"get failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_getbit(times):
@@ -166,9 +151,7 @@ def test_getbit(times):
         res1 = r1.getbit(name=key, offset=offset)
         if res != res1:
             print(f"getbit failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_getrange(times):
@@ -180,9 +163,7 @@ def test_getrange(times):
         res1 = r1.getrange(key=key, start=start, end=end)
         if res != res1:
             print(f"getrange failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_setrange(times):
@@ -194,9 +175,7 @@ def test_setrange(times):
         res1 = r1.setrange(name=key, offset=offset, value=val)
         if res != res1:
             print(f"setrange failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_getset(times):
@@ -207,9 +186,7 @@ def test_getset(times):
         res1 = r1.getset(name=key, value=set_val)
         if res != res1:
             print(f"getset failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_incr(times):
@@ -228,9 +205,7 @@ def test_incr(times):
             res= r.incr(name=key, amount=1)
             if res != res1:
                 print(f"incr failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
-
-    return True
+                sys.exit("failed")
 
 
 def test_incrbyfloat(times):
@@ -249,9 +224,7 @@ def test_incrbyfloat(times):
             res = r.incrbyfloat(name=key, amount=2.2)
             if res != res1:
                 print(f"incrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
-
-    return True
+                sys.exit("failed")
 
 
 def test_mget(times):
@@ -264,9 +237,7 @@ def test_mget(times):
         res1 = r1.mget(keys=keys)
         if res != res1:
             print(f"mget failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_mset(times):
@@ -280,9 +251,7 @@ def test_mset(times):
         res1 = r1.mset(kv)
         if res != res1:
             print(f"mset failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_msetnx(times):
@@ -296,9 +265,7 @@ def test_msetnx(times):
         res1 = r1.msetnx(kv)
         if res != res1:
             print(f"msetnx failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_set(times):
@@ -314,9 +281,7 @@ def test_set(times):
 
         if res != res1:
             print(f"set failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_setnx(times):
@@ -328,9 +293,7 @@ def test_setnx(times):
 
         if res != res1:
             print(f"setnx failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_strlen(times):
@@ -341,9 +304,7 @@ def test_strlen(times):
 
         if res != res1:
             print(f"strlen failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_setbit(times):
@@ -355,12 +316,24 @@ def test_setbit(times):
         res1 = r1.setbit(name=key, offset=offset, value=bit)
         if res != res1:
             print(f"setbit failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
+            sys.exit("failed")
 
-    return True
+
+def config_redis():
+    r1.config_set(name="bunnymem", value=20 << 20)
+    r1.config_set(name="bunnydeny", value="no")
+    r2.config_set(name="bunnymem", value=200 << 20)
 
 
 def _main():
+    ip = str(sys.argv[1])
+    init_common_redis(ip)
+    global r, r1, r2
+    r = g_common["r"]
+    r1 = g_common["r1"]
+    r2 = g_common["r2"]
+    config_redis()
+
     flush_all_db()
     call_with_time(inject)
     call_with_time(compare_all)

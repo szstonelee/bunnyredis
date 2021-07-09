@@ -7,12 +7,12 @@ from test_hash import key_scope as hash_key_scope
 from test_hash import field_scope as hash_field_scope
 from test_db import get_random_key as db_get_random_key
 from test_db import get_random_dbid as db_get_random_dbid
+import sys
 
 
-r1.config_set(name="bunnymem", value=50<<20)
-#r1.config_set(name="bunnymem", value=1<<30)
-r1.config_set(name="bunnydeny", value="no")
-r2.config_set(name="bunnymem", value=1<<30)
+r: redis.StrictRedis
+r1: redis.StrictRedis
+r2: redis.StrictRedis
 
 
 def test_multi_exec(times):
@@ -73,14 +73,24 @@ def test_multi_exec(times):
 
         if res != res1:
             print(f"transaction failed, res = {res}, res1 = {res1}")
-            return False
+            sys.exit("failed")
 
-    return True
+
+def config_redis():
+    r1.config_set(name="bunnymem", value=50 << 20)
+    r1.config_set(name="bunnydeny", value="no")
+    r2.config_set(name="bunnymem", value=1 << 30)
 
 
 def _main():
-    #for i in range(0, 50):
-    #print(f"main loop in {i}")
+    ip = str(sys.argv[1])
+    init_common_redis(ip)
+    global r, r1, r2
+    r = g_common["r"]
+    r1 = g_common["r1"]
+    r2 = g_common["r2"]
+    config_redis()
+
     flush_all_db()
     call_with_time(inject_string)
     call_with_time(inject_hash)

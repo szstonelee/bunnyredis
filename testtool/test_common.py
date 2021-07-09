@@ -2,44 +2,61 @@ import redis
 import time
 
 
-server_ip = "192.168.64.4"
 real_redis_port = 8888
 bunny_node1_port = 6379
 bunny_node2_port = 6380
 
-pool = redis.ConnectionPool(host=server_ip,
-                            port=real_redis_port,
-                            db=0,
-                            decode_responses=True,
-                            encoding='utf-8',
-                            socket_connect_timeout=2)
-r = redis.StrictRedis(connection_pool=pool)
+# global name, g_common is a dict for other modules
+g_common = {"server_ip": "need init", "r": None, "r1": None, "r2": None}
+server_ip: str
+r: redis.StrictRedis
+r1: redis.StrictRedis
+r2: redis.StrictRedis
 
 
-# BunnyRedis node 1
-pool1 = redis.ConnectionPool(host=server_ip,
-                             port=bunny_node1_port,
-                             db=0,
-                             decode_responses=True,
-                             encoding='utf-8',
-                             socket_connect_timeout=2)
-r1 = redis.StrictRedis(connection_pool=pool1)
+def init_common_redis(ip_from_outside):
+    global server_ip
+    server_ip = ip_from_outside
+    global g_common
+    g_common["server_ip"] = server_ip
 
-# BunnyRedis node 2
-pool2 = redis.ConnectionPool(host=server_ip,
-                             port=bunny_node2_port,
-                             db=0,
-                             decode_responses=True,
-                             encoding='utf-8',
-                             socket_connect_timeout=2)
-r2 = redis.StrictRedis(connection_pool=pool2)
+    pool = redis.ConnectionPool(host=server_ip,
+                                port=real_redis_port,
+                                db=0,
+                                decode_responses=True,
+                                encoding='utf-8',
+                                socket_connect_timeout=2)
+
+    global r
+    r = redis.StrictRedis(connection_pool=pool)
+    g_common["r"] = r
+
+    pool1 = redis.ConnectionPool(host=server_ip,
+                                 port=bunny_node1_port,
+                                 db=0,
+                                 decode_responses=True,
+                                 encoding='utf-8',
+                                 socket_connect_timeout=2)
+    global r1
+    r1 = redis.StrictRedis(connection_pool=pool1)
+    g_common["r1"] = r1
+
+    pool2 = redis.ConnectionPool(host=server_ip,
+                                 port=bunny_node2_port,
+                                 db=0,
+                                 decode_responses=True,
+                                 encoding='utf-8',
+                                 socket_connect_timeout=2)
+    global r2
+    r2 = redis.StrictRedis(connection_pool=pool2)
+    g_common["r2"] = r2
 
 
 def call_with_time(fn, *args):
     start = time.time()
-    fn_res = fn(*args)
+    fn(*args)
     end = time.time()
-    print("{:>19}{:<8} = {:<6},    elapse = {:<3} (seconds)".format(fn.__name__, "("+str(args[0])+")" if len(args) else "()", "True" if fn_res else "False", int(end-start)))
+    print("{:>19}{:<8} = {:<6},    elapse = {:<3} (seconds)".format(fn.__name__, "("+str(args[0])+")" if len(args) else "()", "Done", int(end-start)))
 
 
 def compare_key_by_dump():
@@ -89,7 +106,7 @@ def compare_key_by_dump():
     return True
 
 
-def get_redis_instantce(dbi):
+def get_redis_instance(dbi):
     p = redis.ConnectionPool(host=server_ip,
                              port=real_redis_port,
                              db=dbi,
@@ -117,7 +134,7 @@ def get_redis_instantce(dbi):
 
 def check_db_size():
     for dbi in range(0, 16):
-        cr, cr1, cr2 = get_redis_instantce(dbi)
+        cr, cr1, cr2 = get_redis_instance(dbi)
 
         sz = cr.dbsize()
         sz1 = cr1.dbsize()
@@ -154,7 +171,7 @@ def compare_all():
         return False
 
     for dbi in range(0, 16):
-        cr, cr1, cr2 = get_redis_instantce(dbi)
+        cr, cr1, cr2 = get_redis_instance(dbi)
 
         keys = cr.keys()
         for key in keys:
@@ -194,8 +211,7 @@ def flush_all_db():
 
 
 def _main():
-    # call_with_time(compare_all)
-    compare_all()
+    pass
 
 
 if __name__ == '__main__':

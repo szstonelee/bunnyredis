@@ -4,12 +4,12 @@ from test_string import inject as inject_string
 from test_string import key_scope as str_key_scope
 from test_hash import inject as inject_hash
 from test_hash import key_scope as hash_key_scope
+import sys
 
 
-r1.config_set(name="bunnymem", value=50<<20)
-r1.config_set(name="lazyfree-lazy-server-del", value="yes")
-r1.config_set(name="bunnydeny", value="no")
-r2.config_set(name="bunnymem", value=1<<30)
+r: redis.StrictRedis
+r1: redis.StrictRedis
+r2: redis.StrictRedis
 
 
 def get_random_key():
@@ -51,9 +51,7 @@ def test_move(times):
         res1 = r1.move(name=key, db=dbid)
         if res != res1:
             print(f"move failed for key {key}, dbid = {dbid}, res = {res}, res1 = {res1}")
-            return False
-
-    return compare_all()
+            sys.exit("failed")
 
 
 def test_exists(times):
@@ -66,9 +64,7 @@ def test_exists(times):
         res1 = r1.exists(*keys)
         if res != res1:
             print(f"exists failed for key {keys}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_object(times):
@@ -80,9 +76,7 @@ def test_object(times):
         res1 = r1.object(key=key, infotype=op)
         if res != res1:
             print(f"object failed for key {key}, op = {op}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_keys(times):
@@ -97,9 +91,7 @@ def test_keys(times):
         res1 = sorted(res1)
         if res != res1:
             print(f"keys failed for pattern = {pattern}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_randomkey(times):
@@ -107,9 +99,7 @@ def test_randomkey(times):
         key = r1.randomkey()
         if not r.exists(key):
             print(f"randomkey failed for key {key}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_rename(times):
@@ -122,12 +112,10 @@ def test_rename(times):
                 res1 = r1.rename(src_key, dst_key)
                 if res != res1:
                     print(f"rename failed for src_key = {src_key}, dst_key = {dst_key}, res = {res}, res1 = {res1}")
-                    return False
+                    sys.exit("failed")
             except redis.exceptions.ResponseError as e:
                 if str(e) != "no such key":
                     raise e
-
-    return True
 
 
 def test_renamenx(times):
@@ -140,12 +128,10 @@ def test_renamenx(times):
                 res1 = r1.renamenx(src=src_key, dst=dst_key)
                 if res != res1:
                     print(f"rename failed for src_key = {src_key}, dst_key = {dst_key}, res = {res}, res1 = {res1}")
-                    return False
+                    sys.exit("failed")
             except redis.exceptions.ResponseError as e:
                 if str(e) != "no such key":
                     raise e
-
-    return True
 
 
 def test_touch(times):
@@ -158,9 +144,7 @@ def test_touch(times):
         res1 = r1.touch(*keys)
         if res != res1:
             print(f"touch failed for key {keys}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_type(times):
@@ -170,9 +154,7 @@ def test_type(times):
         res1 = r1.type(name=key)
         if res != res1:
             print(f"type failed for key {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_del(times):
@@ -185,9 +167,7 @@ def test_del(times):
         res1 = r1.delete(*keys)
         if res != res1:
             print(f"delete failed for keys = {keys}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_unlink(times):
@@ -200,12 +180,25 @@ def test_unlink(times):
         res1 = r1.unlink(*keys)
         if res != res1:
             print(f"unlink failed for keys = {keys}, res = {res}, res1 = {res1}")
-            return False
+            sys.exit("failed")
 
-    return True
+
+def config_redis():
+    r1.config_set(name="bunnymem", value=50 << 20)
+    r1.config_set(name="lazyfree-lazy-server-del", value="yes")
+    r1.config_set(name="bunnydeny", value="no")
+    r2.config_set(name="bunnymem", value=1 << 30)
 
 
 def _main():
+    ip = str(sys.argv[1])
+    init_common_redis(ip)
+    global r, r1, r2
+    r = g_common["r"]
+    r1 = g_common["r1"]
+    r2 = g_common["r2"]
+    config_redis()
+
     flush_all_db()
     call_with_time(inject_string)
     call_with_time(inject_hash)

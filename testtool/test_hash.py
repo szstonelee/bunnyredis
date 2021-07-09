@@ -1,18 +1,14 @@
 import random
 import string
 from test_common import *
+import sys
 
 
 key_scope = 500
 field_scope = 10_000
-
-# BunnyRedis node 1
-r1.config_set(name="bunnymem", value=15<<20)
-#r1.config_set(name="bunnymem", value=1<<30)
-r1.config_set(name="bunnydeny", value="no")
-
-# BunnyRedis node 2
-r2.config_set(name="bunnymem", value=1<<30)
+r: redis.StrictRedis
+r1: redis.StrictRedis
+r2: redis.StrictRedis
 
 
 def inject():
@@ -73,9 +69,7 @@ def test_hget(times):
         res1 = r1.hget(name=key, key=field)
         if res != res1:
             print(f"get failed, key = {key}, field = {field}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_hexists(times):
@@ -89,9 +83,7 @@ def test_hexists(times):
         res1 = r1.hexists(name=key, key=field)
         if res != res1:
             print(f"hexists failed, key = {key}, field = {field}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_hgetall(times):
@@ -101,9 +93,7 @@ def test_hgetall(times):
         res1 = r1.hgetall(name=key)
         if res != res1:
             print(f"hgetall failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_hkeys(times):
@@ -113,7 +103,7 @@ def test_hkeys(times):
         res1 = r1.hkeys(name=key)
         if len(res) != len(res1):
             print(f"hkeys failed, len not correct, key = {key}, res = {res}, res1 = {res1}")
-            return False
+            sys.exit("failed")
         else:
             for field in res:
                 exist = False
@@ -123,9 +113,7 @@ def test_hkeys(times):
                         break
                 if not exist:
                     print(f"hkeys failed, field not in it, key = {key}, field = {field}")
-                    return False
-
-    return True
+                    sys.exit("failed")
 
 
 def test_hlen(times):
@@ -135,9 +123,7 @@ def test_hlen(times):
         res1 = r1.hlen(name=key)
         if res != res1:
             print(f"hkeys failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_hmget(times):
@@ -156,9 +142,7 @@ def test_hmget(times):
 
         if res != res1:
             print(f"hmget failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_hvals(times):
@@ -174,13 +158,11 @@ def test_hvals(times):
         for val in res:
             if val not in set_res1:
                 print(f"hvals failed, in key {key}, val {val} not in set_res1")
-                return False
+                sys.exit("failed")
         for val1 in res1:
             if val1 not in set_res:
                 print(f"hvals failed, in key {key}, val1 {val1} not in set_res")
-                return False
-
-    return True
+                sys.exit("failed")
 
 
 def test_hstrlen(times):
@@ -195,9 +177,7 @@ def test_hstrlen(times):
 
         if res != res1:
             print(f"hstrlen failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_hdel(times):
@@ -216,9 +196,7 @@ def test_hdel(times):
 
         if res != res1:
             print(f"hdel failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
-
-    return True
+            sys.exit("failed")
 
 
 def test_hincrby(times):
@@ -233,11 +211,9 @@ def test_hincrby(times):
             res1 = r1.hincrby(name=key, key=field, amount=2)
             if res != res1:
                 print(f"hincrby failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
+                sys.exit("failed")
         except redis.exceptions.ResponseError as e:
             pass        # not an integer
-
-    return True
 
 
 def test_hincrbyfloat(times):
@@ -252,11 +228,9 @@ def test_hincrbyfloat(times):
             res1 = r1.hincrbyfloat(name=key, key=field, amount=1.1)
             if res != res1:
                 print(f"hincrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
-                return False
+                sys.exit("failed")
         except redis.exceptions.ResponseError as e:
             pass        # not an integer
-
-    return True
 
 
 def test_hsetnx(times):
@@ -272,12 +246,24 @@ def test_hsetnx(times):
 
         if res != res1:
             print(f"hsetnx failed, key = {key}, res = {res}, res1 = {res1}")
-            return False
+            sys.exit("failed")
 
-    return True
+
+def config_redis():
+    r1.config_set(name="bunnymem", value=15 << 20)
+    r1.config_set(name="bunnydeny", value="no")
+    r2.config_set(name="bunnymem", value=1 << 30)
 
 
 def _main():
+    ip = str(sys.argv[1])
+    init_common_redis(ip)
+    global r, r1, r2
+    r = g_common["r"]
+    r1 = g_common["r1"]
+    r2 = g_common["r2"]
+    config_redis()
+
     flush_all_db()
     call_with_time(inject)
     call_with_time(compare_all)
@@ -300,12 +286,5 @@ def _main():
     call_with_time(compare_all)
 
 
-def loop_for_debug():
-    for i in range(0, 50):
-        print(f"loop i = {i}")
-        _main()
-
-
 if __name__ == '__main__':
     _main()
-    # loop_for_debug()
