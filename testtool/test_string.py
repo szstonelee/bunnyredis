@@ -335,7 +335,7 @@ def _main():
     config_redis()
 
     flush_all_db()
-    call_with_time(inject, r, r1)
+    inject(r, r1)
     call_with_time(compare_all)
     call_with_time(test_decr, 10_000)
     call_with_time(compare_all)
