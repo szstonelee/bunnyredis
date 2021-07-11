@@ -1790,11 +1790,15 @@ static void* entryInConsumerThread(void *arg) {
     
     // call rd_kafka_consume_start() before get_offset_range()
     rd_kafka_topic_conf_t *topicConf = rd_kafka_topic_conf_new();
-    if (!topicConf)
-        serverPanic("initKafkaConsumer failed for rd_kafka_topic_conf_new()");
+    if (!topicConf) {
+        serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_topic_conf_new()");
+        exit(1);
+    }
     rd_kafka_topic_t *rkt = rd_kafka_topic_new(rk, bunnyRedisTopic, topicConf);
-    if (!rkt)
-        serverPanic("initKafkaConsumer failed for rd_kafka_topic_new(), errno = %d,", errno);
+    if (!rkt) {
+        serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_topic_new(), errno = %d,", errno);
+        exit(1);
+    }
     err = rd_kafka_consume_start(rkt, 0, RD_KAFKA_OFFSET_BEGINNING);
     if (err) {
         serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_consume_start(), err = %d", err);
