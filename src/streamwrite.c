@@ -1799,11 +1799,13 @@ static void* entryInConsumerThread(void *arg) {
         serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_topic_new(), errno = %d,", errno);
         exit(1);
     }
+    /*
     err = rd_kafka_consume_start(rkt, 0, RD_KAFKA_OFFSET_BEGINNING);
     if (err) {
         serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_consume_start(), err = %d", err);
         exit(1);
     }
+    */
 
     int64_t lo_offset, hi_offset;
     get_offset_range(rk, &lo_offset, &hi_offset); 
