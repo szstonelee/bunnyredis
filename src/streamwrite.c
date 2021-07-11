@@ -1704,7 +1704,7 @@ static void addRcvMsgInConsumerThread(size_t len, void *payload) {
  *             1. lo <= hi
  *             2. lo <= hi and lo >= 0 */
 static void get_offset_range(rd_kafka_t *rk, int64_t *lo, int64_t *hi) {
-    int max_try_times = 30;
+    int max_try_times = 5;
     rd_kafka_resp_err_t err;
     for (int i = 0; i < max_try_times; ++i) {
         err = rd_kafka_query_watermark_offsets(rk, bunnyRedisTopic, 0, lo, hi, 2000);
