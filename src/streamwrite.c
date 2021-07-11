@@ -1712,6 +1712,10 @@ static void get_offset_range(rd_kafka_t *rk, int64_t *lo, int64_t *hi) {
         usleep(500*1000);   // sleep for 500 ms
     }
     if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+        serverLog(LL_WARNING, "get_offset_range() failed, err = %d, err desc = %s.", 
+                  err, rd_kafka_err2str(err));
+        exit(1);
+        /*
         if (err != RD_KAFKA_RESP_ERR__UNKNOWN_PARTITION) {
             serverLog(LL_WARNING, "get_offset_range() failed, err = %d, err desc = %s.", 
                     err, rd_kafka_err2str(err));
@@ -1721,6 +1725,7 @@ static void get_offset_range(rd_kafka_t *rk, int64_t *lo, int64_t *hi) {
             *lo = 0;
             *hi = 0;
         }
+        */
     }
     serverAssert(*lo >= 0 && *lo <= *hi);
 }
