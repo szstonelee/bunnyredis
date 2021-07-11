@@ -1704,12 +1704,12 @@ static void addRcvMsgInConsumerThread(size_t len, void *payload) {
  *             1. lo <= hi
  *             2. lo <= hi and lo >= 0 */
 static void get_offset_range(rd_kafka_t *rk, int64_t *lo, int64_t *hi) {
-    int max_try_times = 3;
+    int max_try_times = 10;
     rd_kafka_resp_err_t err;
     for (int i = 0; i < max_try_times; ++i) {
         err = rd_kafka_query_watermark_offsets(rk, bunnyRedisTopic, 0, lo, hi, 2000);
         if (err == RD_KAFKA_RESP_ERR_NO_ERROR) break;
-        usleep(500*1000);   // sleep for 500 ms
+        usleep(1000*1000);   // sleep for 1 second
     }
     if (err != RD_KAFKA_RESP_ERR_NO_ERROR) {
         serverLog(LL_WARNING, "get_offset_range() failed, err = %d, err desc = %s.", 
