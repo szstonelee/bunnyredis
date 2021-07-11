@@ -1789,6 +1789,7 @@ static void* entryInConsumerThread(void *arg) {
         serverPanic("initKafkaConsumer failed for rd_kafka_subscribe() reason = %s", rd_kafka_err2str(err));
     
     // call rd_kafka_consume_start() before get_offset_range()
+    /*
     rd_kafka_topic_conf_t *topicConf = rd_kafka_topic_conf_new();
     if (!topicConf) {
         serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_topic_conf_new()");
@@ -1799,14 +1800,13 @@ static void* entryInConsumerThread(void *arg) {
         serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_topic_new(), errno = %d,", errno);
         exit(1);
     }
-    
     err = rd_kafka_consume_start(rkt, 0, RD_KAFKA_OFFSET_BEGINNING);
     if (err) {
         serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_consume_start(), err = %d", err);
         exit(1);
     }
+    */
     
-
     int64_t lo_offset, hi_offset;
     get_offset_range(rk, &lo_offset, &hi_offset); 
     int64_t total_resume_cnt = hi_offset-lo_offset;
