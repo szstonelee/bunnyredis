@@ -1715,17 +1715,6 @@ static void get_offset_range(rd_kafka_t *rk, int64_t *lo, int64_t *hi) {
         serverLog(LL_WARNING, "get_offset_range() failed, err = %d, err desc = %s.", 
                   err, rd_kafka_err2str(err));
         exit(1);
-        /*
-        if (err != RD_KAFKA_RESP_ERR__UNKNOWN_PARTITION) {
-            serverLog(LL_WARNING, "get_offset_range() failed, err = %d, err desc = %s.", 
-                    err, rd_kafka_err2str(err));
-            exit(1);
-        } else {
-            // for the fresh install of zookeeper and kafka, the partition is not defined
-            *lo = 0;
-            *hi = 0;
-        }
-        */
     }
     serverAssert(*lo >= 0 && *lo <= *hi);
 }
@@ -1787,26 +1776,7 @@ static void* entryInConsumerThread(void *arg) {
     err = rd_kafka_assign(rk, partition_list);
     if (err) 
         serverPanic("initKafkaConsumer failed for rd_kafka_subscribe() reason = %s", rd_kafka_err2str(err));
-    
-    // call rd_kafka_consume_start() before get_offset_range()
-    /*
-    rd_kafka_topic_conf_t *topicConf = rd_kafka_topic_conf_new();
-    if (!topicConf) {
-        serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_topic_conf_new()");
-        exit(1);
-    }
-    rd_kafka_topic_t *rkt = rd_kafka_topic_new(rk, bunnyRedisTopic, topicConf);
-    if (!rkt) {
-        serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_topic_new(), errno = %d,", errno);
-        exit(1);
-    }
-    err = rd_kafka_consume_start(rkt, 0, RD_KAFKA_OFFSET_BEGINNING);
-    if (err) {
-        serverLog(LL_WARNING, "initKafkaConsumer failed for rd_kafka_consume_start(), err = %d", err);
-        exit(1);
-    }
-    */
-    
+        
     int64_t lo_offset, hi_offset;
     get_offset_range(rk, &lo_offset, &hi_offset); 
     int64_t total_resume_cnt = hi_offset-lo_offset;
