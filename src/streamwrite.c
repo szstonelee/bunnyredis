@@ -1395,6 +1395,7 @@ static void* entryInProducerThread(void *arg) {
  * for kafka idompootent C code, reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 void initKafkaProducer() {
     bootstrapBrokers = get_kafka_brokers();
+    serverLog(LL_NOTICE, "kafka brokers = %s", bootstrapBrokers);
 
     pthread_t producer_thread;
 
