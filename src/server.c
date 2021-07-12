@@ -3558,6 +3558,12 @@ void initServer(void) {
         exit(1);
     }
 
+    /*
+    sds brokers = get_kafka_brokers();
+    serverLog(LL_WARNING, "brokers = %s", brokers == NULL ? "null" : brokers);
+    exit(0);
+    */
+
     /* init virtual client. NOTE: need to do before the following Kafka initinization because threads */
     server.virtual_client = createClient(NULL);
     server.virtual_client->user = NULL;                // admin user

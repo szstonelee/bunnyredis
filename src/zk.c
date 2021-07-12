@@ -447,6 +447,7 @@ static sds parse_endpoint(sds read) {
     return res;
 }
 
+/*
 sds get_kafka_broker() {
     zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
     if (!zh) {
@@ -486,6 +487,57 @@ sds get_kafka_broker() {
 
     serverLog(LL_WARNING, "get_kafka_broker() can not get Kafka broker");
     exit(1);
+}
+*/
+
+sds get_kafka_brokers() {
+    zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
+    if (!zh) {
+        serverLog(LL_WARNING, "get_kafka_brokers() failed, zk_server = %s, errno = %d\n", 
+                  server.zk_server, errno);
+        exit(1);
+    } 
+
+    int rc;
+    struct String_vector ids;
+    char *ids_znode = "/brokers/ids";
+    rc = zoo_get_children(zh, ids_znode, 0, &ids);
+    if (rc != ZOK) {
+        serverLog(LL_WARNING, "zoo_get_children() failed for rc = %d", rc);
+        exit(1);
+    }
+
+    if (ids.count <= 0) {
+        serverLog(LL_WARNING, "No Kafka broker ids found in Zookeeper");
+        exit(1);
+    }
+
+    sds brokers = sdsnew(NULL);
+    for (int32_t i = 0; i < ids.count; ++i) {
+        sds one_broker_znode = sdsnew(ids_znode);
+        one_broker_znode = sdscatlen(one_broker_znode, "/", 1);
+        one_broker_znode = sdscatlen(one_broker_znode, ids.data[i], strlen(ids.data[i]));
+        int buf_len = sizeof(buffer);
+        rc = zoo_get(zh, one_broker_znode, 0, buffer, &buf_len, &stat);
+        if (rc || buf_len < 0) {
+            serverLog(LL_WARNING, "get_kafka_brokers() failed for zoo_get() for one_broker_znode = %s", one_broker_znode);
+            exit(1);
+        }
+        sds read_json_str = sdsnewlen(buffer, (size_t)buf_len);
+        sds endpoint = parse_endpoint(read_json_str);
+
+        if (i != 0) {
+            brokers = sdscatlen(brokers, ",", 1);
+        } 
+        brokers = sdscatlen(brokers, endpoint, sdslen(endpoint));
+
+        sdsfree(read_json_str);
+        sdsfree(endpoint);
+        sdsfree(one_broker_znode);
+    }
+
+    zookeeper_close(zh);
+    return brokers;
 }
 
 static void create_change_znode(zhandle_t *zh) {

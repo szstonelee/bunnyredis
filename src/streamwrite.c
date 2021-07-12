@@ -1394,7 +1394,7 @@ static void* entryInProducerThread(void *arg) {
  * but main thead need use spin lock to guarantee no context switch to kernel  
  * for kafka idompootent C code, reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 void initKafkaProducer() {
-    bootstrapBrokers = get_kafka_broker();
+    bootstrapBrokers = get_kafka_brokers();
 
     pthread_t producer_thread;
 
