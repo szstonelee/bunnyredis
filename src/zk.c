@@ -559,7 +559,7 @@ sds get_kafka_brokers(int32_t *online_broker_count) {
 }
 
 /* NOTE: In Kafka, it is for runtiime parse */
-size_t get_kafka_replication_num() {
+size_t get_kafka_replication_factor() {
     zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
     if (!zh) {
         serverLog(LL_WARNING, "get_kafka_brokers() failed, zk_server = %s, errno = %d\n", 

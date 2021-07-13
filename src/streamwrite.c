@@ -1794,9 +1794,9 @@ static void* entryInConsumerThread(void *arg) {
     // check runtime replication number for redisStreamWrite
     if (online_broker_count > 1) {
         // only need check when broker is in cluster mode
-        size_t repl_num = get_kafka_replication_num();
+        size_t repl_num = get_kafka_replication_factor();
         if (repl_num == 0 || repl_num == 1) {
-            serverLog(LL_WARNING, "Kafka broker has more than 1 nodes but redisStreamWrite topic replication number = %lu is too low! Please reference the wiki to increase the replication factor of redisStreamWrite topic.", 
+            serverLog(LL_WARNING, "Kafka cluster(broker) have more than 1 nodes but topic redisStreamWrite replication factor = %lu is too low! Please reference the WIKI (check github.com/szstonelee/bunnyredis/wiki/Debug-tools) to increase the replication factor of redisStreamWrite.", 
                      repl_num);
             exit(1);
         }
