@@ -3558,9 +3558,9 @@ void initServer(void) {
         exit(1);
     }
 
-    /*
-    sds brokers = get_kafka_brokers();
-    serverLog(LL_WARNING, "brokers = %s", brokers == NULL ? "null" : brokers);
+    /* --debug
+    size_t replication_cnt = get_kafka_replication_num();
+    serverLog(LL_WARNING, "replication_cnt = %lu", replication_cnt);
     exit(0);
     */
 

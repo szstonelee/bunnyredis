@@ -447,6 +447,22 @@ static sds parse_endpoint(sds read) {
     return res;
 }
 
+static size_t parse_isr(sds read) {
+    json_error_t err;
+    json_t *root = json_loads(read, 0, &err);
+    if (!root || json_typeof(root) != JSON_OBJECT) {
+        serverLog(LL_WARNING, "parse_isr() load read as json failed! read = %s", read);
+        exit(1);
+    }
+
+    json_t *isr = json_object_get(root, "isr");
+    if (!isr || json_typeof(isr) != JSON_ARRAY) {
+        serverLog(LL_WARNING, "parse_isr() isr failed! read = %s", read);
+        exit(1);
+    }
+    return json_array_size(isr);
+}
+
 /*
 sds get_kafka_broker() {
     zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
@@ -490,7 +506,7 @@ sds get_kafka_broker() {
 }
 */
 
-sds get_kafka_brokers() {
+sds get_kafka_brokers(int32_t *online_broker_count) {
     zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
     if (!zh) {
         serverLog(LL_WARNING, "get_kafka_brokers() failed, zk_server = %s, errno = %d\n", 
@@ -511,6 +527,8 @@ sds get_kafka_brokers() {
         serverLog(LL_WARNING, "No Kafka broker ids found in Zookeeper");
         exit(1);
     }
+
+    if (online_broker_count) *online_broker_count = ids.count;
 
     sds brokers = sdsnew(NULL);
     for (int32_t i = 0; i < ids.count; ++i) {
@@ -538,6 +556,29 @@ sds get_kafka_brokers() {
 
     zookeeper_close(zh);
     return brokers;
+}
+
+/* NOTE: In Kafka, it is for runtiime parse */
+size_t get_kafka_replication_num() {
+    zh = zookeeper_init(server.zk_server, NULL, 10000, NULL, NULL, 0);
+    if (!zh) {
+        serverLog(LL_WARNING, "get_kafka_brokers() failed, zk_server = %s, errno = %d\n", 
+                  server.zk_server, errno);
+        exit(1);
+    } 
+
+    int buf_len = sizeof(buffer);
+    int rc = zoo_get(zh, "/brokers/topics/redisStreamWrite/partitions/0/state", 0, buffer, &buf_len, &stat);
+    if (rc || buf_len < 0) {
+            serverLog(LL_WARNING, "get_kafka_replication_num() failed for zoo_get()");
+            exit(1);
+    }
+    sds read_json_str = sdsnewlen(buffer, (size_t)buf_len);
+    size_t isr_cnt = parse_isr(read_json_str);
+
+    sdsfree(read_json_str);
+    zookeeper_close(zh);
+    return isr_cnt;
 }
 
 static void create_change_znode(zhandle_t *zh) {

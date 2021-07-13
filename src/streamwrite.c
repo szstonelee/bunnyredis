@@ -56,6 +56,7 @@ static pthread_spinlock_t producerLock;
 static int kafkaReadyAndTopicCorrect = 0;   // producer startup check kafka state and main thread wait it for correctness
 redisAtomic int kafkaStartupConsumeFinish;   // when startup, finish all consume data, then unpause all clients to start working
 static const char *bootstrapBrokers = NULL;
+static int32_t online_broker_count = 0;
 static const char *bunnyRedisTopic = "redisStreamWrite"; 
 
 static list* sndMsgs;  // producer and main thread contented data
@@ -1394,7 +1395,7 @@ static void* entryInProducerThread(void *arg) {
  * but main thead need use spin lock to guarantee no context switch to kernel  
  * for kafka idompootent C code, reference https://github.com/edenhill/librdkafka/blob/master/examples/idempotent_producer.c */
 void initKafkaProducer() {
-    bootstrapBrokers = get_kafka_brokers();
+    bootstrapBrokers = get_kafka_brokers(&online_broker_count);
     serverLog(LL_NOTICE, "kafka brokers = %s", bootstrapBrokers);
 
     pthread_t producer_thread;
@@ -1789,6 +1790,17 @@ static void* entryInConsumerThread(void *arg) {
 
     // then set broker max.message.bytes
     set_max_message_bytes(2 * MARSHALL_SIZE_OVERFLOW);
+
+    // check runtime replication number for redisStreamWrite
+    if (online_broker_count > 1) {
+        // only need check when broker is in cluster mode
+        size_t repl_num = get_kafka_replication_num();
+        if (repl_num == 0 || repl_num == 1) {
+            serverLog(LL_WARNING, "Kafka broker has more than 1 nodes but redisStreamWrite topic replication number = %lu is too low! Please reference the wiki to increase the replication factor of redisStreamWrite topic.", 
+                     repl_num);
+            exit(1);
+        }
+    }
 
     // loop for Kafka messages
     monotime startupCheckTimer = 0;
