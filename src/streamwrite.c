@@ -1326,7 +1326,11 @@ static void* entryInProducerThread(void *arg) {
     serverAssert(bootstrapBrokers);
 
     conf = rd_kafka_conf_new();
-    if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrapBrokers,
+    const char *used_bootstrap_servers = bootstrapBrokers;
+    if (server.kafka_brokers[0] != 0)
+        used_bootstrap_servers = server.kafka_brokers;
+    serverLog(LL_NOTICE, "producer use bootstrap.servers = %s", used_bootstrap_servers);
+    if (rd_kafka_conf_set(conf, "bootstrap.servers", used_bootstrap_servers,
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
         serverPanic("initKafkaProducer failed for rd_kafka_conf_set() bootstrap.servers, reason = %s", errstr);
     if (rd_kafka_conf_set(conf, "linger.ms", "0",
