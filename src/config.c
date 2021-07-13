@@ -2621,6 +2621,7 @@ standardConfig configs[] = {
     createStringConfig("proc-title-template", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.proc_title_template, CONFIG_DEFAULT_PROC_TITLE_TEMPLATE, isValidProcTitleTemplate, updateProcTitleTemplate),
     createStringConfig("rocksdb-parent-folder", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.bunny_rocksdb_parent, "/tmp/bunny_rocksdb", NULL, NULL),
     createStringConfig("zk", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.zk_server, "127.0.0.1:2181", isValidZk, NULL),
+    createStringConfig("kafka", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.kafka_brokers, "", NULL, NULL),
 
     /* SDS Configs */
     createSDSConfig("masterauth", NULL, MODIFIABLE_CONFIG | SENSITIVE_CONFIG, EMPTY_STRING_IS_NULL, server.masterauth, NULL, NULL, NULL),

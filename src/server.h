@@ -1384,6 +1384,7 @@ struct redisServer {
     char *bunny_rocksdb_parent;     /* parent folder for RocksDB */
     char *bunny_rockdb_path;        /* real path for RocksDB */
     char *zk_server;                /* zookeeper bootstrap server */
+    char *kafka_brokers;            /* specified Kafka brokers */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
     int aof_rewrite_perc;           /* Rewrite AOF if % growth is > M and... */
     off_t aof_rewrite_min_size;     /* the AOF file is at least N bytes. */
