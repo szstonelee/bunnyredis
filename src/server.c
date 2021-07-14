@@ -6206,7 +6206,7 @@ int checkForSentinelMode(int argc, char **argv) {
 /* Function called at startup to load RDB or AOF file in memory. */
 void loadDataFromDisk(void) {
     /* NOTE: BunnyRedis disable RDB/AOF. No need to load data from disk file */
-    serverLog(LL_WARNING, "We do not support load RDB/AOF anymore!");
+    serverLog(LL_WARNING, "BunnyRedis do not support load RDB/AOF anymore. All logs in Kafka and no loss!");
     return;
 
     long long start = ustime();
