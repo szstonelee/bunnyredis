@@ -3595,6 +3595,9 @@ void initServer(void) {
             serverLog(LL_WARNING, "initServer() failed for incorrect user defined bunnymem = %llu", server.bunnymem);
             exit(1);
         }
+        serverLog(LL_NOTICE, "------------------------------------------");
+        serverLog(LL_NOTICE, "|-- Use defined bunnymem = %llu --|", server.bunnymem);
+        serverLog(LL_NOTICE, "------------------------------------------");
     }
 
     /* stream write producer init. NOTE: must before consumer init because main thread need it to check kafka state */
