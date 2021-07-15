@@ -20,7 +20,7 @@ pool1 = redis.ConnectionPool(host="192.168.0.22",
                              decode_responses=True,
                              encoding='utf-8',
                              socket_connect_timeout=2)
-r1 = redis.StrictRedis(connection_pool=pool)
+r1 = redis.StrictRedis(connection_pool=pool1)
 r1.config_set(name="bunnymem", value=4<<30)       # 4G
 r1.config_set(name="bunnydeny", value="no")
 
@@ -31,7 +31,7 @@ pool2 = redis.ConnectionPool(host="192.168.0.33",
                              decode_responses=True,
                              encoding='utf-8',
                              socket_connect_timeout=2)
-r2 = redis.StrictRedis(connection_pool=pool)
+r2 = redis.StrictRedis(connection_pool=pool2)
 r2.config_set(name="bunnymem", value=2<<30)       # 2G, so some data in storage
 r2.config_set(name="bunnydeny", value="no")
 
