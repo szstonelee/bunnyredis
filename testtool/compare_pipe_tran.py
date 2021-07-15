@@ -2,6 +2,8 @@ import redis
 import time
 import random
 import string
+import sys
+
 
 # real redis
 pool = redis.ConnectionPool(host="192.168.0.11",
@@ -11,7 +13,7 @@ pool = redis.ConnectionPool(host="192.168.0.11",
                             encoding='utf-8',
                             socket_connect_timeout=2)
 r = redis.StrictRedis(connection_pool=pool)
-#r.flushall()
+
 
 # bunny-redis r1 all memory
 pool1 = redis.ConnectionPool(host="192.168.0.22",
@@ -35,15 +37,16 @@ r2 = redis.StrictRedis(connection_pool=pool2)
 r2.config_set(name="bunnymem", value=1500<<20)       # 1.5G, so some value in storage
 r2.config_set(name="bunnydeny", value="no")
 
-#r1.flushall()   # so r2 is allso flusshall()
+key_scope = 3000_000        # which will make rock value in r2 is around 60%
 
-key_scope = 3000_000
-
-factor = 1.2        # define 20% missing visit
-rock_percentage = "40%"
+factor = 1.1        # define 10% missing visit
+rock_percentage = "60%"
 
 
 def inject_string():
+    r.flushall()
+    r1.flushall()   # so r2 is allso flusshall()
+
     start = time.time()
     for i in range(0, key_scope):
         key = "str_" + str(i)
@@ -95,8 +98,12 @@ def test_write_with_read_rock(times, server, is_tran, env):
     print("{:>35} = {:<5}(sec)".format(env, str(time.time() - start)[:5]))
 
 
+
+
 def _main():
-    #inject_string()
+    is_to_inject = sys.argv[1]
+    if is_to_inject:
+        inject_string()
 
     print("")
 
