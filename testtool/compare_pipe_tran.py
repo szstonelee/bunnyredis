@@ -86,14 +86,14 @@ def test_write(times: int, server, no_pipe_tran: bool, is_tran: bool, env: strin
         for _ in range(0, times):
             for _ in range(0, random.randint(2, 20)):
                 key = "str_" + str(random.randint(0, int(key_scope * factor)))
-                val = random.choice(string.ascii_letters) * random.randint(2, 2000)
+                val = "val_" + random.choice(string.ascii_letters) * random.randint(2, 2000)
                 server.set(name=key, value=val)
     else:
         for _ in range(0, times):
             pipe = server.pipeline(transaction=is_tran)
             for _ in range(0, random.randint(2, 20)):
                 key = "str_" + str(random.randint(0, int(key_scope * factor)))
-                val = random.choice(string.ascii_letters) * random.randint(2, 2000)
+                val = "val_" + random.choice(string.ascii_letters) * random.randint(2, 2000)
                 pipe.set(name=key, value=val)
             pipe.execute()
     print("{:>35} = {:<5}(sec)".format(env, str(time.time() - start)[:5]))
