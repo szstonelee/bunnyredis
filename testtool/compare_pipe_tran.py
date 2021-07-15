@@ -43,6 +43,7 @@ factor = 1.2        # define 20% missing visit
 
 
 def inject_string():
+    start = time.time()
     for i in range(0, key_scope):
         key = "str_" + str(i)
         val_len = random.randint(2, 2000)       # avg len = 1000
@@ -52,9 +53,11 @@ def inject_string():
         r1.set(name=key, value=val)
 
         if i != 0 and i%10_000 == 0:
-            print(f"inject i = {i}")
+            print(f"inject i = {i}, latency(s) = {str(int(time.time() - start))}")
+            start = time.time()
 
-    print(f"inject finish, total key num = {key_scope}", )
+    print(f"inject finish, total key num = {key_scope}")
+
     return True
 
 
