@@ -4,7 +4,7 @@ import random
 import string
 
 # real redis
-pool = redis.ConnectionPool(host="192.168.0.22",
+pool = redis.ConnectionPool(host="192.168.0.11",
                             port=6379,
                             db=0,
                             decode_responses=True,
@@ -14,7 +14,7 @@ r = redis.StrictRedis(connection_pool=pool)
 r.flushall()
 
 # bunny-redis r1 all memory
-pool1 = redis.ConnectionPool(host="192.168.0.11",
+pool1 = redis.ConnectionPool(host="192.168.0.22",
                              port=6379,
                              db=0,
                              decode_responses=True,
