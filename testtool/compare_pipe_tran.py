@@ -105,14 +105,14 @@ def test_write_with_read_rock(times: int, server, no_pipe_tran: bool, is_tran: b
         for _ in range(0, times):
             for _ in range(0, random.randint(2, 20)):
                 key = "str_" + str(random.randint(0, int(key_scope * factor)))
-                append_val = "7"
+                append_val = "?"
                 server.append(key=key, value=append_val)
     else:
         for _ in range(0, times):
             pipe = server.pipeline(transaction=is_tran)
             for _ in range(0, random.randint(2, 20)):
                 key = "str_" + str(random.randint(0, int(key_scope * factor)))
-                append_val = "7"
+                append_val = "?"
                 pipe.append(key=key, value=append_val)
             pipe.execute()
     print("{:>35} = {:<5}(sec)".format(env, str(time.time() - start)[:5]))
@@ -128,42 +128,54 @@ def _main():
 
     test_read(times, r, True, None, "pure get(redis)")
     test_read(times, r, False, False, "pipe get(redis)")
+    test_read(times, r1, True, None, "pure get(bunny)")
     test_read(times, r1, False, False, "pipe get(bunny)")
-    test_read(times, r2, False, False, f"pipe get(bunny rock {rock_percentage}")
+    test_read(times, r2, True, None, f"pure get(bunny rock {rock_percentage})")
+    test_read(times, r2, False, False, f"pipe get(bunny rock {rock_percentage})")
 
     print("")
 
     test_read(times, r, True, None, "pure get(redis)")
     test_read(times, r, False, True, "transaction get(redis)")
+    test_read(times, r1, True, None, "pure get(bunny)")
     test_read(times, r1, False, True, "transaction get(bunny)")
+    test_read(times, r2, True, None, f"pure get(bunny rock {rock_percentage})")
     test_read(times, r2, False, True, f"transaction get(bunny rock {rock_percentage})")
 
     print("")
 
     test_write(times, r, True, None, "pure set(redis)")
     test_write(times, r, False, False, "pipe set(redis)")
+    test_write(times, r1, True, None, "pure set(bunny)")
     test_write(times, r1, False, False, "pipe set(bunny)")
+    test_write(times, r2, True, None, f"pure set(bunny rock {rock_percentage})")
     test_write(times, r2, False, False, f"pipe set(bunny rock {rock_percentage})")
 
     print("")
 
     test_write(times, r, True, None, "pure set(redis)")
     test_write(times, r, False, True, "transaction set(redis)")
+    test_write(times, r1, True, None, "pure set(bunny)")
     test_write(times, r1, False, True, "transaction set(bunny)")
+    test_write(times, r2, True, None, f"pure set(bunny rock {rock_percentage})")
     test_write(times, r2, False, True, f"transaction set(bunny rock {rock_percentage})")
 
     print("")
 
     test_write_with_read_rock(times, r, True, None, "pure append(redis)")
     test_write_with_read_rock(times, r, False, False, "pipe append(redis)")
+    test_write_with_read_rock(times, r1, True, None, "pure append(bunny)")
     test_write_with_read_rock(times, r1, False, False, "pipe append(bunny)")
+    test_write_with_read_rock(times, r2, True, None, f"pure append(bunny rock {rock_percentage})")
     test_write_with_read_rock(times, r2, False, False, f"pipe append(bunny rock {rock_percentage})")
 
     print("")
 
     test_write_with_read_rock(10_000, r, True, None, "pure append(redis)")
     test_write_with_read_rock(10_000, r, False, True, "transaction append(redis)")
+    test_write_with_read_rock(10_000, r1, True, None, "pure append(bunny)")
     test_write_with_read_rock(10_000, r1, False, True, "transaction append(bunny)")
+    test_write_with_read_rock(10_000, r2, True, None, f"pure append(bunny rock {rock_percentage})")
     test_write_with_read_rock(10_000, r2, False, True, f"transaction append(bunny rock {rock_percentage})")
 
     print("")
