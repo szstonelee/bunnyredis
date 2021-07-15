@@ -98,11 +98,8 @@ def test_write_with_read_rock(times, server, is_tran, env):
     print("{:>35} = {:<5}(sec)".format(env, str(time.time() - start)[:5]))
 
 
-
-
 def _main():
-    is_to_inject = sys.argv[1]
-    if is_to_inject:
+    if len(sys.argv) > 1:
         inject_string()
 
     print("")
