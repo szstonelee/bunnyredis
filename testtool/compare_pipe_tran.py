@@ -22,7 +22,7 @@ pool1 = redis.ConnectionPool(host="192.168.0.22",
                              socket_connect_timeout=2)
 r1 = redis.StrictRedis(connection_pool=pool)
 r1.config_set(name="bunnymem", value=4<<30)       # 4G
-r1.config_set(name="bunydeny", value="no")
+r1.config_set(name="bunnydeny", value="no")
 
 # bunny-redis r2 with data in storage
 pool2 = redis.ConnectionPool(host="192.168.0.33",
