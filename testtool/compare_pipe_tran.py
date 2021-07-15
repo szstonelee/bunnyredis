@@ -11,7 +11,7 @@ pool = redis.ConnectionPool(host="192.168.0.11",
                             encoding='utf-8',
                             socket_connect_timeout=2)
 r = redis.StrictRedis(connection_pool=pool)
-r.flushall()
+#r.flushall()
 
 # bunny-redis r1 all memory
 pool1 = redis.ConnectionPool(host="192.168.0.22",
@@ -35,12 +35,13 @@ r2 = redis.StrictRedis(connection_pool=pool2)
 r2.config_set(name="bunnymem", value=1500<<20)       # 1.5G, so some value in storage
 r2.config_set(name="bunnydeny", value="no")
 
-r1.flushall()   # so r2 is allso flusshall()
+#r1.flushall()   # so r2 is allso flusshall()
 
 key_scope = 3000_000
 
 factor = 1.2        # define 20% missing visit
 rock_percentage = "40%"
+
 
 def inject_string():
     start = time.time()
@@ -95,45 +96,45 @@ def test_write_with_read_rock(times, server, is_tran, env):
 
 
 def _main():
-    inject_string()
+    #inject_string()
 
-    # print("")
-    #
-    # test_read(10_000, r, False, "pipe get(redis)")
-    # test_read(10_000, r2, False, "pipe get(bunny)")
-    # test_read(10_000, r1, False, f"pipe get(bunny rock {rock_percentage}})")
-    #
-    # print("")
-    #
-    # test_read(10_000, r, True, "transaction get(redis)")
-    # test_read(10_000, r2, True, "transaction get(bunny)")
-    # test_read(10_000, r1, True, f"transaction get(bunny rock {rock_percentage}})")
-    #
-    # print("")
-    #
-    # test_write(10_000, r, False, "pipe set(redis)")
-    # test_write(10_000, r2, False, "pipe set(bunny)")
-    # test_write(10_000, r1, False, "pipe set(bunny)")
-    #
-    # print("")
-    #
-    # test_write(10_000, r, True, "transaction set(redis)")
-    # test_write(10_000, r2, True, "transaction set(bunny)")
-    # test_write(10_000, r1, True, f"transaction set(bunny rock {rock_percentage}})")
-    #
-    # print("")
-    #
-    # test_write_with_read_rock(10_000, r, False, "pipe apppend(redis)")
-    # test_write_with_read_rock(10_000, r2, False, "pipe apppend(bunny)")
-    # test_write_with_read_rock(10_000, r1, False, f"pipe apppend(bunny rock {rock_percentage}})")
-    #
-    # print("")
-    #
-    # test_write_with_read_rock(10_000, r, True, "transaction append(redis)")
-    # test_write_with_read_rock(10_000, r2, True, "transaction append(bunny)")
-    # test_write_with_read_rock(10_000, r1, True, f"transaction append(bunny rock {rock_percentage}})")
-    #
-    # print("")
+    print("")
+
+    test_read(10_000, r, False, "pipe get(redis)")
+    test_read(10_000, r2, False, "pipe get(bunny)")
+    test_read(10_000, r1, False, f"pipe get(bunny rock {rock_percentage}")
+
+    print("")
+
+    test_read(10_000, r, True, "transaction get(redis)")
+    test_read(10_000, r2, True, "transaction get(bunny)")
+    test_read(10_000, r1, True, f"transaction get(bunny rock {rock_percentage})")
+
+    print("")
+
+    test_write(10_000, r, False, "pipe set(redis)")
+    test_write(10_000, r2, False, "pipe set(bunny)")
+    test_write(10_000, r1, False, "pipe set(bunny)")
+
+    print("")
+
+    test_write(10_000, r, True, "transaction set(redis)")
+    test_write(10_000, r2, True, "transaction set(bunny)")
+    test_write(10_000, r1, True, f"transaction set(bunny rock {rock_percentage})")
+
+    print("")
+
+    test_write_with_read_rock(10_000, r, False, "pipe apppend(redis)")
+    test_write_with_read_rock(10_000, r2, False, "pipe apppend(bunny)")
+    test_write_with_read_rock(10_000, r1, False, f"pipe apppend(bunny rock {rock_percentage})")
+
+    print("")
+
+    test_write_with_read_rock(10_000, r, True, "transaction append(redis)")
+    test_write_with_read_rock(10_000, r2, True, "transaction append(bunny)")
+    test_write_with_read_rock(10_000, r1, True, f"transaction append(bunny rock {rock_percentage})")
+
+    print("")
 
 
 if __name__ == '__main__':
