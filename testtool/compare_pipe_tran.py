@@ -51,7 +51,7 @@ def inject_string():
     for i in range(0, key_scope):
         key = "str_" + str(i)
         val_len = random.randint(2, 2000)       # avg len = 1000
-        val = random.choice(string.ascii_letters) * val_len
+        val = "val_" + random.choice(string.ascii_letters) * val_len
 
         r.set(name=key, value=val)
         r1.set(name=key, value=val)
