@@ -37,7 +37,7 @@ r2.config_set(name="bunnydeny", value="no")
 
 r1.flushall()   # so r2 is allso flusshall()
 
-key_scope = 100_000
+key_scope = 4000_000
 
 factor = 1.2        # define 20% missing visit
 
