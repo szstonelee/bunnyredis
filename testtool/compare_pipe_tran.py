@@ -118,7 +118,7 @@ def _main():
 
     test_write(10_000, r, False, "pipe set(redis)")
     test_write(10_000, r2, False, "pipe set(bunny)")
-    test_write(10_000, r1, False, "pipe set(bunny)")
+    test_write(10_000, r1, False, "pipe set(bunny rock {rock_percentage})")
 
     print("")
 
@@ -128,9 +128,9 @@ def _main():
 
     print("")
 
-    test_write_with_read_rock(10_000, r, False, "pipe apppend(redis)")
-    test_write_with_read_rock(10_000, r2, False, "pipe apppend(bunny)")
-    test_write_with_read_rock(10_000, r1, False, f"pipe apppend(bunny rock {rock_percentage})")
+    test_write_with_read_rock(10_000, r, False, "pipe append(redis)")
+    test_write_with_read_rock(10_000, r2, False, "pipe append(bunny)")
+    test_write_with_read_rock(10_000, r1, False, f"pipe append(bunny rock {rock_percentage})")
 
     print("")
 
