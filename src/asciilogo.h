@@ -40,7 +40,7 @@ const char *ascii_logo =
 " |    `-._`-._        _.-'_.-'    |           https://github.com/szstonelee/bunnyredis       \n"
 "  `-._    `-._`-.__.-'_.-'    _.-'            https://hub.fastgit.org/szstonelee/bunnyredis  \n"
 " |`-._`-._    `-.__.-'    _.-'_.-'|           https://redis.io       \n"
-" |    `-._`-._        _.-'_.-'    |           Ask questions, https://www.zhihu.com/people/szstonelee \n"
+" |    `-._`-._        _.-'_.-'    |           Ask questions to Tony, zhihu.com/people/szstonelee \n"
 "  `-._    `-._`-.__.-'_.-'    _.-'                                   \n"
 "      `-._    `-.__.-'    _.-'                                       \n"
 "          `-._        _.-'                                           \n"
