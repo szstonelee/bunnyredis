@@ -256,8 +256,12 @@ def config_redis():
 
 
 def _main():
-    ip = str(sys.argv[1])
-    init_common_redis(ip)
+    r_ip = str(sys.argv[1])
+    r1_ip = str(sys.argv[2])
+    r2_ip = str(sys.argv[3])
+
+    init_common_redis(r_ip, r1_ip, r2_ip)
+
     global r, r1, r2
     r = g_common["r"]
     r1 = g_common["r1"]

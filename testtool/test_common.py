@@ -2,25 +2,35 @@ import redis
 import time
 
 
-real_redis_port = 8888
+real_redis_port = 6379
 bunny_node1_port = 6379
-bunny_node2_port = 6380
+bunny_node2_port = 6379
 
 # global name, g_common is a dict for other modules
-g_common = {"server_ip": "need init", "r": None, "r1": None, "r2": None}
-server_ip: str
+g_common = {"server_r_ip": "need init",
+            "server_r1_ip" : "need_init",
+            "server_r2_ip" : "need_init",
+            "r": None, "r1": None, "r2": None}
+server_r_ip: str
+server_r1_ip: str
+server_r2_ip: str
 r: redis.StrictRedis
 r1: redis.StrictRedis
 r2: redis.StrictRedis
 
 
-def init_common_redis(ip_from_outside):
-    global server_ip
-    server_ip = ip_from_outside
-    global g_common
-    g_common["server_ip"] = server_ip
+def init_common_redis(r_ip, r1_ip, r2_ip):
+    global server_r_ip, server_r1_ip, server_r2_ip
+    server_r_ip = r_ip
+    server_r1_ip = r1_ip
+    server_r2_ip = r2_ip
 
-    pool = redis.ConnectionPool(host=server_ip,
+    global g_common
+    g_common["server_r_ip"] = server_r_ip
+    g_common["server_r1_ip"] = server_r1_ip
+    g_common["server_r2_ip"] = server_r2_ip
+
+    pool = redis.ConnectionPool(host=server_r_ip,
                                 port=real_redis_port,
                                 db=0,
                                 decode_responses=True,
@@ -31,7 +41,7 @@ def init_common_redis(ip_from_outside):
     r = redis.StrictRedis(connection_pool=pool)
     g_common["r"] = r
 
-    pool1 = redis.ConnectionPool(host=server_ip,
+    pool1 = redis.ConnectionPool(host=server_r1_ip,
                                  port=bunny_node1_port,
                                  db=0,
                                  decode_responses=True,
@@ -41,7 +51,7 @@ def init_common_redis(ip_from_outside):
     r1 = redis.StrictRedis(connection_pool=pool1)
     g_common["r1"] = r1
 
-    pool2 = redis.ConnectionPool(host=server_ip,
+    pool2 = redis.ConnectionPool(host=server_r2_ip,
                                  port=bunny_node2_port,
                                  db=0,
                                  decode_responses=True,
@@ -60,7 +70,7 @@ def call_with_time(fn, *args):
 
 
 def compare_key_by_dump():
-    check_pool = redis.ConnectionPool(host=server_ip,
+    check_pool = redis.ConnectionPool(host=server_r_ip,
                                       port=real_redis_port,
                                       db=0,
                                       decode_responses=True,
@@ -69,7 +79,7 @@ def compare_key_by_dump():
     check_r = redis.StrictRedis(connection_pool=check_pool)
 
     # BunnyRedis node 1
-    check_pool1 = redis.ConnectionPool(host=server_ip,
+    check_pool1 = redis.ConnectionPool(host=server_r1_ip,
                                        port=bunny_node1_port,
                                        db=0,
                                        decode_responses=True,
@@ -78,7 +88,7 @@ def compare_key_by_dump():
     check_r1 = redis.StrictRedis(connection_pool=check_pool1)
 
     # BunnyRedis node 2
-    check_pool2 = redis.ConnectionPool(host=server_ip,
+    check_pool2 = redis.ConnectionPool(host=server_r2_ip,
                                        port=bunny_node2_port,
                                        db=0,
                                        decode_responses=True,
@@ -107,19 +117,19 @@ def compare_key_by_dump():
 
 
 def get_redis_instance(dbi):
-    p = redis.ConnectionPool(host=server_ip,
+    p = redis.ConnectionPool(host=server_r_ip,
                              port=real_redis_port,
                              db=dbi,
                              decode_responses=True,
                              encoding='latin1',
                              socket_connect_timeout=2)
-    p1 = redis.ConnectionPool(host=server_ip,
+    p1 = redis.ConnectionPool(host=server_r1_ip,
                               port=bunny_node1_port,
                               db=dbi,
                               decode_responses=True,
                               encoding='latin1',
                               socket_connect_timeout=2)
-    p2 = redis.ConnectionPool(host=server_ip,
+    p2 = redis.ConnectionPool(host=server_r2_ip,
                               port=bunny_node2_port,
                               db=dbi,
                               decode_responses=True,
