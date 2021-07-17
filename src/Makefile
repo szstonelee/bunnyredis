@@ -293,7 +293,7 @@ REDIS_CLI_OBJ=anet.o adlist.o dict.o redis-cli.o zmalloc.o release.o ae.o crcspe
 
 all: $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME)
 	@echo ""
-	@echo "Hint: It's a good idea to run 'make test' ;)"
+	@echo "Hint: It's a good idea to run BunnyRedis ;)"
 	@echo ""
 
 Makefile.dep:
