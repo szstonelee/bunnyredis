@@ -43,6 +43,4 @@ src/bunny-redis-static
 src/bunny-redis-lite
 testtool/.idea
 testtool/__pycache__
-release/static-bunny-redis
-releasse/bunny-redis
 .DS_Store
