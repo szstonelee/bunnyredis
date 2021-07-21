@@ -11,19 +11,17 @@ r2: redis.StrictRedis
 
 def inject(r: redis.StrictRedis, r1: redis.StrictRedis):
     # Need to see the rock value exist in BunnyRedis
-    print(f"start to inject string, key_scope = {key_scope}")
     for i in range(0, key_scope):
         key = "str_" + str(i)
         # 10% is str of OBJ_ENCODING_INT
         if random.randint(0, 9) == 0:
             val = str(random.randint(0, 1000))
         else:
-            val_len = random.randint(2, 2000)
+            val_len = random.randint(2, 2000)   # NOTE: maybe int
             val = random.choice(string.ascii_letters) * val_len
 
         r.set(name=key, value=val)
         r1.set(name=key, value=val)
-    print(f"inject finish, total key num = {key_scope}", )
     return True
 
 
@@ -35,7 +33,7 @@ def test_append(times):
         res1 = r1.append(key=key, value=append_val)
         if res != res1:
             print(f"append failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_bitcount(times):
@@ -47,37 +45,37 @@ def test_bitcount(times):
         res1 = r1.bitcount(key=key, start=start, end=end)
         if res != res1:
             print(f"bitcount failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_bitfield(times):
     for _ in range(0, times):
-        type = "i16"
+        my_type = "i16"
         offset = random.randint(1, 100)
         dice = random.randint(0, 2)
         key = "str_" + str(random.randint(0, key_scope * 2))
         bf = r.bitfield(key=key)
         bf1 = r1.bitfield(key=key)
         if dice == 0:   # GET
-            res = bf.get(fmt=type, offset=offset).execute()
-            res1 = bf1.get(fmt=type, offset=offset).execute()
+            res = bf.get(fmt=my_type, offset=offset).execute()
+            res1 = bf1.get(fmt=my_type, offset=offset).execute()
             if res != res1:
                 print(f"bitfield get failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
+                raise RuntimeError("fail")
         elif dice == 1:  #SET
             val = random.randint(0, 100)
-            res = bf.set(fmt=type, offset=offset, value=val).execute()
-            res1 = bf1.set(fmt=type, offset=offset, value=val).execute()
+            res = bf.set(fmt=my_type, offset=offset, value=val).execute()
+            res1 = bf1.set(fmt=my_type, offset=offset, value=val).execute()
             if res != res1:
                 print(f"bitfield set failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
+                raise RuntimeError("fail")
         else:   #INCRBY
             increment = random.randint(0, 100)
-            res = bf.incrby(fmt=type, offset=offset, increment=increment).execute()
-            res1 = bf1.incrby(fmt=type, offset=offset, increment=increment).execute()
+            res = bf.incrby(fmt=my_type, offset=offset, increment=increment).execute()
+            res1 = bf1.incrby(fmt=my_type, offset=offset, increment=increment).execute()
             if res != res1:
                 print(f"bitfield incrby failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
+                raise RuntimeError("fail")
 
 
 def test_bitop(times):
@@ -87,9 +85,8 @@ def test_bitop(times):
         for _ in (0, random.randint(1,10)):
             key = "str_" + str(random.randint(0, key_scope * 2))
             keys.append(key)
-        index = random.randint(0, 3)
         ops = ("AND", "OR", "XOR", "NOT")
-        op = ops[index]
+        op = ops[random.randint(0, 3)]
         if op != "NOT":
             res1 = r1.bitop(op, dest_key, *keys)
             res = r.bitop(op, dest_key, *keys)
@@ -98,7 +95,7 @@ def test_bitop(times):
             res = r.bitop(op, dest_key, keys[0])
         if res != res1:
             print(f"bitop failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_bitpos(times):
@@ -111,26 +108,58 @@ def test_bitpos(times):
         res1 = r1.bitpos(key=key, bit=bit, start=start, end=end)
         if res != res1:
             print(f"bitpos failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_decr(times):
     for _ in range(0, times):
         key = "str_" + str(random.randint(0, key_scope * 2))
-        is_ok = False
-        res1 = None
         try:
-            res1 = r1.decr(name=key, amount=1)
-            is_ok = True
-        except redis.exceptions.ResponseError as e:
-            # because value is not integer as string
-            # print(e)
-            pass
-        if is_ok:
             res = r.decr(name=key, amount=1)
-            if res != res1:
-                print(f"decr failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
+            try:
+                res1 = r1.decr(name=key, amount=1)
+                if res != res1:
+                    print(f"decr failed, key = {key}, res = {res}, res1 = {res1}")
+                    raise RuntimeError("fail")
+            except redis.exceptions.ResponseError as e:
+                raise RuntimeError("fail") from e
+        except redis.exceptions.ResponseError as e:
+            if str(e) != "value is not an integer or out of range":
+                raise e
+
+
+def test_incr(times):
+    for _ in range(0, times):
+        key = "str_" + str(random.randint(0, key_scope * 2))
+        try:
+            res = r.incr(name=key, amount=1)
+            try:
+                res1 = r1.incr(name=key, amount=1)
+                if res != res1:
+                    print(f"incr failed, key = {key}, res = {res}, res1 = {res1}")
+                    raise RuntimeError("fail")
+            except redis.exceptions.ResponseError as e:
+                raise RuntimeError("fail") from e
+        except redis.exceptions.ResponseError as e:
+            if str(e) != "value is not an integer or out of range":
+                raise e
+
+
+def test_incrbyfloat(times):
+    for _ in range(0, times):
+        key = "str_" + str(random.randint(0, key_scope * 2))
+        try:
+            res = r.incrbyfloat(name=key, amount=2.2)
+            try:
+                res1 = r1.incrbyfloat(name=key, amount=2.2)
+                if res != res1:
+                    print(f"incrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
+                    raise RuntimeError("fail")
+            except redis.exceptions.ResponseError as e:
+                raise RuntimeError("fail") from e
+        except redis.exceptions.ResponseError as e:
+            if str(e) != "value is not a valid float":
+                raise e
 
 
 def test_get(times):
@@ -140,7 +169,7 @@ def test_get(times):
         res1 = r1.get(key)
         if res != res1:
             print(f"get failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_getbit(times):
@@ -151,7 +180,7 @@ def test_getbit(times):
         res1 = r1.getbit(name=key, offset=offset)
         if res != res1:
             print(f"getbit failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_getrange(times):
@@ -163,7 +192,7 @@ def test_getrange(times):
         res1 = r1.getrange(key=key, start=start, end=end)
         if res != res1:
             print(f"getrange failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_setrange(times):
@@ -175,7 +204,7 @@ def test_setrange(times):
         res1 = r1.setrange(name=key, offset=offset, value=val)
         if res != res1:
             print(f"setrange failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_getset(times):
@@ -186,45 +215,7 @@ def test_getset(times):
         res1 = r1.getset(name=key, value=set_val)
         if res != res1:
             print(f"getset failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
-
-
-def test_incr(times):
-    for _ in range(0, times):
-        key = "str_" + str(random.randint(0, key_scope * 2))
-        is_ok = False
-        res1 = None
-        try:
-            res1 = r1.incr(name=key, amount=1)
-            is_ok = True
-        except redis.exceptions.ResponseError as e:
-            # because value is not integer as string
-            #print(e)
-            pass
-        if is_ok:
-            res= r.incr(name=key, amount=1)
-            if res != res1:
-                print(f"incr failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
-
-
-def test_incrbyfloat(times):
-    for _ in range(0, times):
-        key = "str_" + str(random.randint(0, key_scope * 2))
-        is_ok = False
-        res1 = None
-        try:
-            res1 = r1.incrbyfloat(name=key, amount=2.2)
-            is_ok = True
-        except redis.exceptions.ResponseError as e:
-            # because value is not integer as string
-            # print(e)
-            pass
-        if is_ok:
-            res = r.incrbyfloat(name=key, amount=2.2)
-            if res != res1:
-                print(f"incrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_mget(times):
@@ -237,7 +228,7 @@ def test_mget(times):
         res1 = r1.mget(keys=keys)
         if res != res1:
             print(f"mget failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_mset(times):
@@ -251,7 +242,7 @@ def test_mset(times):
         res1 = r1.mset(kv)
         if res != res1:
             print(f"mset failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_msetnx(times):
@@ -265,7 +256,7 @@ def test_msetnx(times):
         res1 = r1.msetnx(kv)
         if res != res1:
             print(f"msetnx failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_set(times):
@@ -281,7 +272,7 @@ def test_set(times):
 
         if res != res1:
             print(f"set failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_setnx(times):
@@ -293,7 +284,7 @@ def test_setnx(times):
 
         if res != res1:
             print(f"setnx failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_strlen(times):
@@ -304,7 +295,7 @@ def test_strlen(times):
 
         if res != res1:
             print(f"strlen failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_setbit(times):
@@ -316,7 +307,7 @@ def test_setbit(times):
         res1 = r1.setbit(name=key, offset=offset, value=bit)
         if res != res1:
             print(f"setbit failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def config_redis():
@@ -339,7 +330,7 @@ def _main():
     config_redis()
 
     flush_all_db()
-    inject(r, r1)
+    call_with_time(inject, r, r1)
     call_with_time(compare_all)
     call_with_time(test_decr, 10_000)
     call_with_time(compare_all)

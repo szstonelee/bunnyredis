@@ -13,7 +13,6 @@ r2: redis.StrictRedis
 
 def inject(r: redis.StrictRedis, r1: redis.StrictRedis):
     # Need to see the rock value exist in BunnyRedis
-    print(f"start to inject hash, key_scope = {key_scope}, field_scope = {field_scope}")
     keys = []
     for i in range(0, key_scope):
         key = "hash_" + str(i)
@@ -54,7 +53,6 @@ def inject(r: redis.StrictRedis, r1: redis.StrictRedis):
                 #if field_cnt % 10000 == 0:
                 #    print(f"cur field_cnt = {field_cnt}, fi = {fi}")
 
-    print(f"inject hash finish, key num = {key_scope}, field total cnt = {field_cnt}")
     return True
 
 
@@ -69,7 +67,7 @@ def test_hget(times):
         res1 = r1.hget(name=key, key=field)
         if res != res1:
             print(f"get failed, key = {key}, field = {field}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_hexists(times):
@@ -83,7 +81,7 @@ def test_hexists(times):
         res1 = r1.hexists(name=key, key=field)
         if res != res1:
             print(f"hexists failed, key = {key}, field = {field}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_hgetall(times):
@@ -93,7 +91,7 @@ def test_hgetall(times):
         res1 = r1.hgetall(name=key)
         if res != res1:
             print(f"hgetall failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_hkeys(times):
@@ -103,7 +101,7 @@ def test_hkeys(times):
         res1 = r1.hkeys(name=key)
         if len(res) != len(res1):
             print(f"hkeys failed, len not correct, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
         else:
             for field in res:
                 exist = False
@@ -113,7 +111,7 @@ def test_hkeys(times):
                         break
                 if not exist:
                     print(f"hkeys failed, field not in it, key = {key}, field = {field}")
-                    sys.exit("failed")
+                    raise RuntimeError("fail")
 
 
 def test_hlen(times):
@@ -123,7 +121,7 @@ def test_hlen(times):
         res1 = r1.hlen(name=key)
         if res != res1:
             print(f"hkeys failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_hmget(times):
@@ -142,7 +140,7 @@ def test_hmget(times):
 
         if res != res1:
             print(f"hmget failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_hvals(times):
@@ -152,17 +150,17 @@ def test_hvals(times):
         res1 = r1.hvals(name=key)
         if len(res) != len(res1):
             print(f"hvals failed for len, key = {key}, len(res) = {len(res)}, len(res1) = {len(res1)}")
-            return False
+            raise RuntimeError("fail")
         set_res = set(res)
         set_res1 = set(res1)
         for val in res:
             if val not in set_res1:
                 print(f"hvals failed, in key {key}, val {val} not in set_res1")
-                sys.exit("failed")
+                raise RuntimeError("fail")
         for val1 in res1:
             if val1 not in set_res:
                 print(f"hvals failed, in key {key}, val1 {val1} not in set_res")
-                sys.exit("failed")
+                raise RuntimeError("fail")
 
 
 def test_hstrlen(times):
@@ -177,7 +175,7 @@ def test_hstrlen(times):
 
         if res != res1:
             print(f"hstrlen failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_hdel(times):
@@ -196,7 +194,7 @@ def test_hdel(times):
 
         if res != res1:
             print(f"hdel failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_hincrby(times):
@@ -208,12 +206,16 @@ def test_hincrby(times):
             field = "field_" + str(random.randint(0, field_scope *2))
         try:
             res = r.hincrby(name=key, key=field, amount=2)
-            res1 = r1.hincrby(name=key, key=field, amount=2)
-            if res != res1:
-                print(f"hincrby failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
+            try:
+                res1 = r1.hincrby(name=key, key=field, amount=2)
+                if res != res1:
+                    print(f"hincrby failed, key = {key}, res = {res}, res1 = {res1}")
+                    raise RuntimeError("fail")
+            except redis.exceptions.ResponseError as e:
+                raise RuntimeError("fail") from e
         except redis.exceptions.ResponseError as e:
-            pass        # not an integer
+            if str(e) != "value is not an integer or out of range":
+                raise e
 
 
 def test_hincrbyfloat(times):
@@ -225,12 +227,16 @@ def test_hincrbyfloat(times):
             field = "field_" + str(random.randint(0, field_scope *2))
         try:
             res = r.hincrbyfloat(name=key, key=field, amount=1.1)
-            res1 = r1.hincrbyfloat(name=key, key=field, amount=1.1)
-            if res != res1:
-                print(f"hincrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
-                sys.exit("failed")
+            try:
+                res1 = r1.hincrbyfloat(name=key, key=field, amount=1.1)
+                if res != res1:
+                    print(f"hincrbyfloat failed, key = {key}, res = {res}, res1 = {res1}")
+                    raise RuntimeError("fail")
+            except redis.exceptions.ResponseError as e:
+                raise RuntimeError("fail") from e
         except redis.exceptions.ResponseError as e:
-            pass        # not an integer
+            if str(e) != "value is not a valid float":
+                raise e
 
 
 def test_hsetnx(times):
@@ -246,7 +252,7 @@ def test_hsetnx(times):
 
         if res != res1:
             print(f"hsetnx failed, key = {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def config_redis():
@@ -269,7 +275,7 @@ def _main():
     config_redis()
 
     flush_all_db()
-    inject(r, r1)
+    call_with_time(inject, r, r1)
     call_with_time(compare_all)
     call_with_time(test_hexists, 10_000)
     call_with_time(test_hgetall, 10_000)

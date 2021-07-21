@@ -14,9 +14,9 @@ g_common = {"server_r_ip": "need init",
 server_r_ip: str
 server_r1_ip: str
 server_r2_ip: str
-r: redis.StrictRedis
-r1: redis.StrictRedis
-r2: redis.StrictRedis
+r: redis.StrictRedis        # real redis
+r1: redis.StrictRedis       # bunny-redis 1 (with rock）
+r2: redis.StrictRedis       # bunny-redis 2 (only mem)
 
 
 def init_common_redis(r_ip, r1_ip, r2_ip):
@@ -102,7 +102,7 @@ def compare_key_by_dump():
     db2_sz = check_r2.dbsize()
     if db_sz != db1_sz or db_sz != db2_sz:
         print(f"db size not equal, db_sz = {db_sz}, db1_sz = {db1_sz}, db2_sz = {db2_sz}")
-        return False
+        raise RuntimeError("fail")
 
     keys = check_r.keys(pattern="*")
     for key in keys:
@@ -111,9 +111,7 @@ def compare_key_by_dump():
         v2 = check_r2.dump(name=key)
         if v != v1 or v != v2:
             print(f"db dump fail, key = {key}, v = {v}, v1 = {v1}, v2 = {v2}")
-            return False
-
-    return True
+            raise RuntimeError("fail")
 
 
 def get_redis_instance(dbi):
@@ -178,7 +176,7 @@ def compare_all():
     time.sleep(1)   # time may be needed for sync of node1 and node2
 
     if not check_db_size():
-        return False
+        raise RuntimeError("fail")
 
     for dbi in range(0, 16):
         cr, cr1, cr2 = get_redis_instance(dbi)
@@ -191,7 +189,7 @@ def compare_all():
 
             if t != t1 or t != t2:
                 print(f"key {key} type check failed, t = {t}, t1 = {t1}, t2 = {t2}")
-                return False
+                raise RuntimeError("fail")
 
             if t == "hash":
                 h = cr.hgetall(name=key)
@@ -200,19 +198,17 @@ def compare_all():
                 if h != h1 or h != h2:
                     find_diff_dict_and_print(f"compare hash h and h1, key = {key}", h, h1)
                     find_diff_dict_and_print(f"compare hash h and h2, key = {key}", h, h2)
-                    return False
+                    raise RuntimeError("fail")
             elif t == "string":
                 s = cr.get(name=key)
                 s1 = cr1.get(name=key)
                 s2 = cr2.get(name=key)
                 if s != s1 or s != s2:
                     print(f"key {key} string content failed, s = {s}, s1 = {s1}, s2 = {s2}")
-                    return False
+                    raise RuntimeError("fail")
             else:
                 print(f"key {key}, not correct type = {t}")
-                return False
-
-    return True
+                raise RuntimeError("fail")
 
 
 def flush_all_db():

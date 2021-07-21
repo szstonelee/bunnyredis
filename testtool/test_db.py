@@ -51,7 +51,7 @@ def test_move(times):
         res1 = r1.move(name=key, db=dbid)
         if res != res1:
             print(f"move failed for key {key}, dbid = {dbid}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_exists(times):
@@ -64,7 +64,7 @@ def test_exists(times):
         res1 = r1.exists(*keys)
         if res != res1:
             print(f"exists failed for key {keys}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_object(times):
@@ -76,7 +76,7 @@ def test_object(times):
         res1 = r1.object(key=key, infotype=op)
         if res != res1:
             print(f"object failed for key {key}, op = {op}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_keys(times):
@@ -87,11 +87,11 @@ def test_keys(times):
             pattern = "string_" + str(random.randint(0,9)) + "*"
         res = r.keys(pattern=pattern)
         res1 = r1.keys(pattern=pattern)
-        res =  sorted(res)
+        res = sorted(res)
         res1 = sorted(res1)
         if res != res1:
             print(f"keys failed for pattern = {pattern}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_randomkey(times):
@@ -99,7 +99,7 @@ def test_randomkey(times):
         key = r1.randomkey()
         if not r.exists(key):
             print(f"randomkey failed for key {key}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_rename(times):
@@ -109,10 +109,13 @@ def test_rename(times):
         if src_key != dst_key:
             try:
                 res = r.rename(src_key, dst_key)
-                res1 = r1.rename(src_key, dst_key)
-                if res != res1:
-                    print(f"rename failed for src_key = {src_key}, dst_key = {dst_key}, res = {res}, res1 = {res1}")
-                    sys.exit("failed")
+                try:
+                    res1 = r1.rename(src_key, dst_key)
+                    if res != res1:
+                        print(f"rename failed for src_key = {src_key}, dst_key = {dst_key}, res = {res}, res1 = {res1}")
+                        raise RuntimeError("fail")
+                except redis.exceptions.ResponseError as e:
+                    raise RuntimeError("fail") from e
             except redis.exceptions.ResponseError as e:
                 if str(e) != "no such key":
                     raise e
@@ -125,10 +128,13 @@ def test_renamenx(times):
         if src_key != dst_key:
             try:
                 res = r.renamenx(src=src_key, dst=dst_key)
-                res1 = r1.renamenx(src=src_key, dst=dst_key)
-                if res != res1:
-                    print(f"rename failed for src_key = {src_key}, dst_key = {dst_key}, res = {res}, res1 = {res1}")
-                    sys.exit("failed")
+                try:
+                    res1 = r1.renamenx(src=src_key, dst=dst_key)
+                    if res != res1:
+                        print(f"rename failed for src_key = {src_key}, dst_key = {dst_key}, res = {res}, res1 = {res1}")
+                        raise RuntimeError("fail")
+                except redis.exceptions.ResponseError as e:
+                    raise RuntimeError("fail") from e
             except redis.exceptions.ResponseError as e:
                 if str(e) != "no such key":
                     raise e
@@ -144,7 +150,7 @@ def test_touch(times):
         res1 = r1.touch(*keys)
         if res != res1:
             print(f"touch failed for key {keys}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_type(times):
@@ -154,7 +160,7 @@ def test_type(times):
         res1 = r1.type(name=key)
         if res != res1:
             print(f"type failed for key {key}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_del(times):
@@ -167,7 +173,7 @@ def test_del(times):
         res1 = r1.delete(*keys)
         if res != res1:
             print(f"delete failed for keys = {keys}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def test_unlink(times):
@@ -180,7 +186,7 @@ def test_unlink(times):
         res1 = r1.unlink(*keys)
         if res != res1:
             print(f"unlink failed for keys = {keys}, res = {res}, res1 = {res1}")
-            sys.exit("failed")
+            raise RuntimeError("fail")
 
 
 def config_redis():
@@ -204,8 +210,8 @@ def _main():
     config_redis()
 
     flush_all_db()
-    inject_string(r, r1)
-    inject_hash(r, r1)
+    call_with_time(inject_string, r, r1)
+    call_with_time(inject_hash, r, r1)
     call_with_time(compare_all)
     call_with_time(test_move, 100)
     call_with_time(compare_all)
