@@ -702,17 +702,11 @@ static size_t can_evict_pure_hash_size(size_t *field_cnt) {
     return no_rock_total;
 } 
 
-/* return EVICT_ROCK_FREE    if evict enough memory 
- * return EVICT_ROCK_TIMEOUT if timeout and not enought memory has been released 
+/* return EVICT_ROCK_FREE    if enough memory (by eviction or not)
+ * return EVICT_ROCK_TIMEOUT if timeout or loop MAX_FAIL_COUNT for no bestfield 
  * If must_od is ture, we ignore the memory over limit check */
 static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t *real_free) {
-    // return EVICT_ROCK_ENOUGH_MEM;   // debug
-
-    int keys_freed = 0;
     size_t mem_tofree;
-    long long mem_freed; /* May be negative */
-    long long delta;
-
     if (must_do) {
         mem_tofree = must_tofree;
     } else {
@@ -723,68 +717,55 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t
         mem_tofree = used - server.bunnymem;
     }
 
-    uint64_t timeout_ms = 2;
-    if (is_startup_on_going())  timeout_ms = 10;
+    /* timeout_ms control the most time used for this eviction.
+     * If evictoon uses too much time, it will break and return */
+    uint64_t timeout_ms = 2;        
+    if (is_startup_on_going())  
+        timeout_ms = 10;
 
-    mem_freed = 0;
-    int timeout = 0;
+    long long mem_freed = 0;    /* May be negative */
     monotime evictionTimer;
     elapsedStart(&evictionTimer);
     struct evictHashPoolEntry *pool = EvictHashPool;
 
     while (mem_freed < (long long)mem_tofree) {
-        int k;
-        sds bestfield = NULL;
-        sds bestkeyWithField = NULL;
-        int bestdbid = -1;
-        sds valstrsds;
-        dictEntry *de_of_db;
-        dict *dict_of_hash;
-        dictEntry *de_of_hash;
+        int best_dbid = -1;
+        dictEntry *best_de_of_db = NULL;
+        dictEntry *best_de_of_hash = NULL;
 
-        int fail_cnt = 0;
-        // unsigned long total_keys, keys;
-        unsigned long total_keys;
-        int can_not_free = 0;
-        while(bestfield == NULL && fail_cnt < 100) {
-            total_keys = 0;
-
+        while(best_de_of_hash == NULL) {
             /* We don't want to make local-db choices when expiring fields,
              * so to start populate the eviction pool sampling keys from
              * every evict_hash_candidates for all dbs. */
+            unsigned long total_keys = 0;
             for (int i = 0; i < EVICT_HASH_CANDIDATES_MAX_SIZE; ++i) {
                 evictHash *evict_hash = server.evic_hash_candidates + i;
                 if (!evict_hash->used) continue;
+
                 total_keys += evictPureHashPoolPopulate(evict_hash->dbid, evict_hash->key,
                                                         evict_hash->no_rocks,
                                                         evict_hash->dict_hash, evict_hash->field_lru, pool);
             }
 
             /* No insert keys and pool is empty, skip to evict. */
-            if (total_keys == 0 && pool[0].field == NULL) {
-                can_not_free = 1;
+            if (total_keys == 0 && pool[0].field == NULL) 
                 return EVICT_ROCK_FREE;
-            } 
 
             /* Go backward from best to worst element to evict. */
-            for (k = EVPOOL_SIZE-1; k >= 0; k--) {
-                if (pool[k].field == NULL) {
-                    bestfield = NULL;
-                    continue;
-                }
-
-                bestdbid = pool[k].dbid;
-                // bestfield = pool[k].field;
-                // bestkeyWithField = pool[k].key;
-
-                de_of_hash = NULL;
-                de_of_db = dictFind(server.db[bestdbid].dict, pool[k].key);
-                if (de_of_db) {
-                    bestkeyWithField = dictGetKey(de_of_db);
-                    robj *o = dictGetVal(de_of_db);
+            for (int k = EVPOOL_SIZE-1; k >= 0; k--) {
+                if (pool[k].field == NULL) continue;
+                
+                best_dbid = pool[k].dbid;
+                best_de_of_db = dictFind(server.db[best_dbid].dict, pool[k].key);
+                if (best_de_of_db) {
+                    robj *o = dictGetVal(best_de_of_db);
                     if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT && o->refcount != OBJ_SHARED_REFCOUNT) {
-                        dict_of_hash = o->ptr;
-                        de_of_hash = dictFind(dict_of_hash, pool[k].field);
+                        best_de_of_hash = dictFind(o->ptr, pool[k].field);
+                        if (best_de_of_hash) {
+                            if (dictGetVal(best_de_of_hash) == shared.hashRockVal)
+                                // need to check whether the value has already been evicted
+                                best_de_of_hash = NULL;
+                        }
                     }
                 }
 
@@ -798,62 +779,39 @@ static int performKeyOfPureHashEvictions(int must_do, size_t must_tofree, size_t
                 pool[k].idle = 0;
                 pool[k].dbid = -1;
 
-                /* If the key exists, is our pick. Otherwise it is
-                 * a ghost and we need to try the next element. */
-                /* What is the situation for ghost? */
-                /* The pool's element has previous value which could be changed, */
-                /*     e.g. DEL and change anotther type */
-                /* These kinds of elements in the pool  which are not string type */
-                /*     or value has been saved to Rocksdb are Ghost */
-                int ghost = 1;
-                if (de_of_hash) {
-                    valstrsds = dictGetVal(de_of_hash);
-                    if (valstrsds != shared.hashRockVal) 
-                        ghost = 0;          // not a ghost
-                } 
-                if (!ghost) {
-                    bestfield = dictGetKey(de_of_hash);
-                    break;
-                }
+                if (best_de_of_hash) break;     // We found the the hash
             }
-            if (bestfield == NULL) ++fail_cnt;
-        }
-
-        if (can_not_free) {
-            timeout = 1;
-            break;
         }
 
         /* Finally convert value of the selected key and write it to RocksDB write queue */
-        if (bestfield) {
-            serverAssert(bestkeyWithField);
-            serverAssert(bestdbid >= 0 && bestdbid < server.dbnum);
-            delta = (long long) zmalloc_used_memory();
-            // dictSetVal(dict_of_hash, de_of_hash, shared.hashRockVal);
-            dictGetVal(de_of_hash) = shared.hashRockVal;
-            // update stat if possible
-            evictHash *evict_hash = lookupEvictOfHash(bestdbid, bestkeyWithField);
+        if (best_de_of_hash) {            
+            serverAssert(best_dbid >= 0 && best_dbid < server.dbnum);
+            serverAssert(best_de_of_db);
+            sds best_key = dictGetKey(best_de_of_db);
+            sds best_field = dictGetKey(best_de_of_hash);
+            long long delta = (long long) zmalloc_used_memory();
+            evictHash *evict_hash = lookupEvictOfHash(best_dbid, best_key);
             if (evict_hash) {
+                serverAssert(evict_hash->rock_cnt + dictSize(evict_hash->no_rocks) == dictSize(evict_hash->dict_hash));
                 ++evict_hash->rock_cnt;
-                int ret = dictDelete(evict_hash->no_rocks, bestfield);
+                int ret = dictDelete(evict_hash->no_rocks, best_field);
                 serverAssert(ret == DICT_OK);
             }
-            addRockWriteTaskOfHash(bestdbid, bestkeyWithField, bestfield, valstrsds);
-            sdsfree(valstrsds);
+            sds to_free_value = dictGetVal(best_de_of_hash);
+            serverAssert(to_free_value != shared.hashRockVal);
+            dictGetVal(best_de_of_hash) = shared.hashRockVal;
+            addRockWriteTaskOfHash(best_dbid, best_key, best_field, to_free_value);
+            sdsfree(to_free_value);
             delta -= (long long) zmalloc_used_memory();
             mem_freed += delta;
-            keys_freed++;
         } 
 
-        if (elapsedMs(evictionTimer) >= timeout_ms) {        // at most 2-3 ms for eviction
-            if (mem_freed < (long long)mem_tofree)
-                timeout = 1;
-            break;
-        }
+        if (elapsedMs(evictionTimer) >= timeout_ms) 
+            return  (mem_freed < (long long)mem_tofree) ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE; 
     }
 
     if (real_free) *real_free = mem_freed > 0 ? mem_freed : 0;
-    return timeout ? EVICT_ROCK_TIMEOUT : EVICT_ROCK_FREE;    
+    return EVICT_ROCK_FREE;    
 }
 
 /* We have two choice of eviction, key (include hash with ziplist) or pure hash. We try randomly to use one. 

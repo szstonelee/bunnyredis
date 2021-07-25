@@ -66,7 +66,7 @@ def call_with_time(fn, *args):
     start = time.time()
     fn(*args)
     end = time.time()
-    print("{:>19}{:<8} = {:<6},    elapse = {:<3} (seconds)".format(fn.__name__, "("+str(args[0])+")" if len(args) else "()", "Done", int(end-start)))
+    print("{:>19}{:<8} = {:<6},    elapse = {:<3} (seconds)".format(fn.__name__, "("+str(args[0])+")" if len(args)==1 else "()", "Done", int(end-start)))
 
 
 def compare_key_by_dump():
@@ -188,7 +188,7 @@ def compare_all():
             t2 = cr2.type(name=key)
 
             if t != t1 or t != t2:
-                print(f"key {key} type check failed, t = {t}, t1 = {t1}, t2 = {t2}")
+                print(f"key {key} in dbi {dbi} type check failed, t = {t}, t1 = {t1}, t2 = {t2}")
                 raise RuntimeError("fail")
 
             if t == "hash":
@@ -196,18 +196,18 @@ def compare_all():
                 h1 = cr1.hgetall(name=key)
                 h2 = cr2.hgetall(name=key)
                 if h != h1 or h != h2:
-                    find_diff_dict_and_print(f"compare hash h and h1, key = {key}", h, h1)
-                    find_diff_dict_and_print(f"compare hash h and h2, key = {key}", h, h2)
+                    find_diff_dict_and_print(f"compare hash h and h1, key = {key}, dbi = {dbi}", h, h1)
+                    find_diff_dict_and_print(f"compare hash h and h2, key = {key}, dbi = {dbi}", h, h2)
                     raise RuntimeError("fail")
             elif t == "string":
                 s = cr.get(name=key)
                 s1 = cr1.get(name=key)
                 s2 = cr2.get(name=key)
                 if s != s1 or s != s2:
-                    print(f"key {key} string content failed, s = {s}, s1 = {s1}, s2 = {s2}")
+                    print(f"key {key} in dbi {dbi} string content failed, s = {s}, s1 = {s1}, s2 = {s2}")
                     raise RuntimeError("fail")
             else:
-                print(f"key {key}, not correct type = {t}")
+                print(f"key {key} in dbi {dbi}, not correct type = {t}")
                 raise RuntimeError("fail")
 
 

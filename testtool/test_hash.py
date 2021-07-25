@@ -214,7 +214,7 @@ def test_hincrby(times):
             except redis.exceptions.ResponseError as e:
                 raise RuntimeError("fail") from e
         except redis.exceptions.ResponseError as e:
-            if str(e) != "value is not an integer or out of range":
+            if str(e) != "hash value is not an integer":
                 raise e
 
 
@@ -235,7 +235,7 @@ def test_hincrbyfloat(times):
             except redis.exceptions.ResponseError as e:
                 raise RuntimeError("fail") from e
         except redis.exceptions.ResponseError as e:
-            if str(e) != "value is not a valid float":
+            if str(e) != "hash value is not a float":
                 raise e
 
 

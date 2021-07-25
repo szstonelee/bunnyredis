@@ -261,10 +261,11 @@ int hashTypeSet(int dbid, sds key, robj *o, sds field, sds value, int flags) {
                 if (dictGetVal(de) == shared.hashRockVal) {
                     serverAssert(evict_hash->rock_cnt);
                     --evict_hash->rock_cnt;
+                    int ret = dictAdd(evict_hash->no_rocks, dictGetKey(de), 0);
+                    serverAssert(ret == DICT_OK);
                 } else {
-                    // NOTE1: use the same field in pure hash
-                    // NOTE2: maybe exist in no_rocks (overwrite)
-                    dictAdd(evict_hash->no_rocks, dictGetKey(de), 0);
+                    dictEntry *de_check = dictFind(evict_hash->no_rocks, dictGetKey(de));
+                    serverAssert(de_check);
                 }
             }
             sdsfree(dictGetVal(de));
