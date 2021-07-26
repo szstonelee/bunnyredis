@@ -942,10 +942,12 @@ struct redisCommand redisCommandTable[] = {
      "fast @keyspace",
      0,NULL,0,0,0,0,0,0},
 
-    {"readonly",NULL,0,readonlyCommand,1,
+    // cluster is not supported in BunnyRedis
+    {"readonly",NULL,-1,readonlyCommand,1,
      "fast @keyspace",
      0,NULL,0,0,0,0,0,0},
 
+    // cluster is not supported in BunnyRedis
     {"readwrite",NULL,-1,readwriteCommand,1,
      "fast @keyspace",
      0,NULL,0,0,0,0,0,0},
@@ -1005,7 +1007,8 @@ struct redisCommand redisCommandTable[] = {
      "read-only @bitmap",
      0,NULL,1,1,1,0,0,0},
 
-    {"wait",NULL,0,waitCommand,3,
+    // BunnyRedis does not suppoort replica (Replication or Cluster)
+    {"wait",NULL,-1,waitCommand,3,
      "no-script @keyspace",
      0,NULL,0,0,0,0,0,0},
 
