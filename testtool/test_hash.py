@@ -209,7 +209,7 @@ def test_hincrby(times):
             try:
                 res1 = r1.hincrby(name=key, key=field, amount=2)
                 if res != res1:
-                    print(f"hincrby failed, key = {key}, res = {res}, res1 = {res1}")
+                    print(f"hincrby failed, key = {key}, field = {field}, res = {res}, res1 = {res1}")
                     raise RuntimeError("fail")
             except redis.exceptions.ResponseError as e:
                 raise RuntimeError("fail") from e
