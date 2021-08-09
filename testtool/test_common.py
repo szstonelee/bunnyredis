@@ -6,6 +6,8 @@ real_redis_port = 6379
 bunny_node1_port = 6379
 bunny_node2_port = 6379
 
+# pwd = "Your Redis Password in redis.conf or br.conf"
+
 # global name, g_common is a dict for other modules
 g_common = {"server_r_ip": "need init",
             "server_r1_ip" : "need_init",
@@ -39,6 +41,7 @@ def init_common_redis(r_ip, r1_ip, r2_ip):
 
     global r
     r = redis.StrictRedis(connection_pool=pool)
+    # r = redis.StrictRedis(host=server_r_ip, password=pwd, encoding='latin1')
     g_common["r"] = r
 
     pool1 = redis.ConnectionPool(host=server_r1_ip,
@@ -49,6 +52,7 @@ def init_common_redis(r_ip, r1_ip, r2_ip):
                                  socket_connect_timeout=2)
     global r1
     r1 = redis.StrictRedis(connection_pool=pool1)
+    # r1 = redis.StrictRedis(host=server_r1_ip, encoding='latin1')  # if use passsword
     g_common["r1"] = r1
 
     pool2 = redis.ConnectionPool(host=server_r2_ip,
@@ -59,6 +63,7 @@ def init_common_redis(r_ip, r1_ip, r2_ip):
                                  socket_connect_timeout=2)
     global r2
     r2 = redis.StrictRedis(connection_pool=pool2)
+    # r2 = redis.StrictRedis(host=server_r2_ip, encoding='latin1')  # if use password
     g_common["r2"] = r2
 
 
@@ -77,6 +82,7 @@ def compare_key_by_dump():
                                       encoding='latin1',
                                       socket_connect_timeout=2)
     check_r = redis.StrictRedis(connection_pool=check_pool)
+    # check_r = redis.StrictRedis(host=server_r_ip, password=pwd, encoding='latin1')
 
     # BunnyRedis node 1
     check_pool1 = redis.ConnectionPool(host=server_r1_ip,
@@ -86,6 +92,7 @@ def compare_key_by_dump():
                                        encoding='latin1',
                                        socket_connect_timeout=2)
     check_r1 = redis.StrictRedis(connection_pool=check_pool1)
+    # check_r2 = redis.StrictRedis(host=server_r2_ip, encoding='latin1')    # if use password
 
     # BunnyRedis node 2
     check_pool2 = redis.ConnectionPool(host=server_r2_ip,
@@ -95,6 +102,7 @@ def compare_key_by_dump():
                                        encoding='latin1',
                                        socket_connect_timeout=2)
     check_r2 = redis.StrictRedis(connection_pool=check_pool2)
+    # check_r2 = redis.StrictRedis(host=server_r2_ip, encoding='latin1')    # if use password
 
     time.sleep(2)  # waiting all sync finished
     db_sz = check_r.dbsize()
@@ -136,6 +144,11 @@ def get_redis_instance(dbi):
     cr = redis.StrictRedis(connection_pool=p)
     cr1 = redis.StrictRedis(connection_pool=p1)
     cr2 = redis.StrictRedis(connection_pool=p2)
+
+    # if use password
+    # cr = redis.StrictRedis(host=server_r_ip, db=dbi, password=pwd, encoding='latin1')
+    # cr1 = redis.StrictRedis(host=server_r1_ip, db=dbi, encoding='latin1')
+    # cr2 = redis.StrictRedis(host=server_r2_ip, db=dbi, encoding='latin1')
 
     return cr, cr1, cr2
 
@@ -192,6 +205,7 @@ def compare_all():
                 raise RuntimeError("fail")
 
             if t == "hash":
+            # if t == b"hash":       # if use pasword
                 h = cr.hgetall(name=key)
                 h1 = cr1.hgetall(name=key)
                 h2 = cr2.hgetall(name=key)
@@ -200,6 +214,7 @@ def compare_all():
                     find_diff_dict_and_print(f"compare hash h and h2, key = {key}, dbi = {dbi}", h, h2)
                     raise RuntimeError("fail")
             elif t == "string":
+            # elif t == b"string":      # if use password
                 s = cr.get(name=key)
                 s1 = cr1.get(name=key)
                 s2 = cr2.get(name=key)
@@ -216,8 +231,9 @@ def flush_all_db():
     r1.flushall()
 
 
-def _main():
-    pass
+def _main():        # for test test_common.py only
+    init_common_redis("192.168.0.11", "192.168.0.22", "192.168.0.33")
+    flush_all_db()
 
 
 if __name__ == '__main__':
